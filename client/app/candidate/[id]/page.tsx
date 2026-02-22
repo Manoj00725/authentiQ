@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useMonitoring } from '@/hooks/useMonitoring';
-import type { BehaviorEvent } from '../../../../shared/types';
+import type { BehaviorEvent } from '@/types';
 
 const INTERVIEW_QUESTIONS = [
     'Tell me about yourself and your background in software engineering.',

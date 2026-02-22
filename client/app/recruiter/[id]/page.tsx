@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import type { EventLog, ScoreUpdate, CandidateSession } from '../../../../shared/types';
+import type { EventLog, ScoreUpdate } from '@/types';
 import {
     AreaChart, Area, BarChart, Bar, LineChart, Line,
     XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
