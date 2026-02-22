@@ -1,0 +1,46 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Meeting {
+  id             String             @id @default(uuid())
+  recruiter_name String
+  created_at     DateTime           @default(now())
+  status         String             @default("waiting") // waiting | active | ended
+  sessions       CandidateSession[]
+
+  @@map("meetings")
+}
+
+model CandidateSession {
+  id                String     @id @default(uuid())
+  meeting_id        String
+  candidate_name    String
+  authenticity_score Float      @default(100)
+  started_at        DateTime   @default(now())
+  ended_at          DateTime?
+  meeting           Meeting    @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  events            EventLog[]
+
+  @@map("candidate_sessions")
+}
+
+model EventLog {
+  id         String           @id @default(uuid())
+  session_id String
+  event_type String
+  timestamp  DateTime         @default(now())
+  severity   String           @default("low")
+  metadata   String?          // JSON string
+  session    CandidateSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@map("event_logs")
+}
