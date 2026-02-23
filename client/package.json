@@ -8,20 +8,23 @@
         "start": "next start"
     },
     "dependencies": {
+        "face-api.js": "^0.22.2",
+        "jspdf": "^2.5.1",
         "next": "^15.1.6",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
-        "socket.io-client": "^4.7.4",
         "recharts": "^2.12.1",
-        "jspdf": "^2.5.1"
+        "simple-peer": "^9.11.1",
+        "socket.io-client": "^4.7.4"
     },
     "devDependencies": {
         "@types/node": "^20.11.24",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",
-        "typescript": "^5.4.2",
-        "tailwindcss": "^3.4.1",
+        "@types/simple-peer": "^9.11.9",
+        "autoprefixer": "^10.4.18",
         "postcss": "^8.4.35",
-        "autoprefixer": "^10.4.18"
+        "tailwindcss": "^3.4.1",
+        "typescript": "^5.4.2"
     }
 }

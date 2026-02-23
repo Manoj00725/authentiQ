@@ -1,7 +1,26 @@
 import { Server } from 'socket.io';
-import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/types';
+import { v4 as uuidv4 } from 'uuid';
+import type { ServerToClientEvents, ClientToServerEvents, CheatAlert } from '../../../shared/types';
 import * as meetingService from '../services/meetingService';
-import { authenticityEngine } from '../scoring/authenticityEngine';
+import { authenticityEngine, AuthenticityEngine } from '../scoring/authenticityEngine';
+
+const CHEAT_EVENT_MESSAGES: Record<string, string> = {
+    code_paste: '📋 Code paste detected — candidate pasted a large block of code',
+    devtools_open: '🔧 DevTools opened — candidate may be running external code',
+    right_click_attempt: '🖱️ Right-click attempted in code editor',
+    keyboard_shortcut_cheat: '⌨️ Cheat shortcut detected (F12, Ctrl+U, or Ctrl+Shift+I)',
+    ai_pattern_detected: '🤖 AI-generated pattern — large structured code appeared rapidly',
+    rapid_solution: '⚡ Rapid solution — full answer appeared in under 30 seconds',
+    tab_switch: '🔄 Tab switch — candidate navigated away from interview',
+    paste_attempt: '📋 Paste detected in text answer',
+    fullscreen_exit: '⤢ Candidate exited fullscreen mode',
+    word_burst: '💥 Unusual bulk text insertion detected',
+    window_blur: '👁️ Browser window lost focus',
+    // Video anti-cheat
+    face_not_detected: '📷 Face not visible — candidate may have stepped away from camera',
+    multiple_faces_detected: '👥 Multiple faces detected — someone may be assisting the candidate',
+    gaze_away: '👀 Candidate looking away from screen repeatedly',
+};
 
 export function setupSocketHandlers(
     io: Server<ClientToServerEvents, ServerToClientEvents>
@@ -57,6 +76,23 @@ export function setupSocketHandlers(
                     total_events: allEvents.length,
                 });
 
+                // Emit structured cheat alert for notable events
+                if (AuthenticityEngine.isCriticalCheat(event.event_type) ||
+                    event.severity === 'high' || event.severity === 'critical') {
+
+                    const alert: CheatAlert = {
+                        id: uuidv4(),
+                        session_id,
+                        event_type: event.event_type,
+                        severity: event.severity,
+                        message: CHEAT_EVENT_MESSAGES[event.event_type] ?? `Suspicious event: ${event.event_type}`,
+                        timestamp: event.timestamp,
+                        code_snapshot: event.metadata?.code_snapshot as string | undefined,
+                    };
+                    io.to(`recruiter:${meeting_id}`).emit('cheat_alert', alert);
+                    console.log(`🚨 Cheat alert emitted: ${alert.event_type} (${alert.severity})`);
+                }
+
                 // Warn candidate on high suspicion events
                 if (event.severity === 'high' || event.severity === 'critical') {
                     socket.emit('error', `Warning: Suspicious behavior detected (${event.event_type})`);
@@ -64,6 +100,30 @@ export function setupSocketHandlers(
             } catch (error) {
                 console.error('behavior_event error:', error);
             }
+        });
+
+        // Live code streaming from candidate → recruiter
+        socket.on('code_update', async ({ session_id, code, language }) => {
+            try {
+                const session = await meetingService.getSessionById(session_id);
+                if (!session) return;
+
+                io.to(`recruiter:${session.meeting_id}`).emit('code_update', {
+                    session_id,
+                    code,
+                    language,
+                    char_count: code.length,
+                    timestamp: new Date().toISOString(),
+                });
+            } catch (error) {
+                console.error('code_update error:', error);
+            }
+        });
+
+        // Recruiter pushes a custom question to candidate mid-session
+        socket.on('recruiter_push_question', ({ meeting_id, session_id, challenge }) => {
+            console.log(`📨 Recruiter pushed question to session: ${session_id}`);
+            io.to(`candidate:${session_id}`).emit('question_pushed', challenge);
         });
 
         // Answer submitted
@@ -98,6 +158,35 @@ export function setupSocketHandlers(
                 console.error('session_end error:', error);
             }
         });
+
+        // ─── WebRTC Signaling Relay ────────────────────────────────────────────
+        // Candidate is ready — notify recruiter to initiate the call
+        socket.on('call_ready', ({ meeting_id, session_id }) => {
+            console.log(`📹 Candidate call ready: session=${session_id} meeting=${meeting_id}`);
+            io.to(`recruiter:${meeting_id}`).emit('peer_call_ready', { session_id });
+        });
+
+        // Recruiter → Candidate: SDP offer
+        socket.on('webrtc_offer', ({ session_id, signal }) => {
+            console.log(`📡 WebRTC offer → candidate:${session_id}`);
+            io.to(`candidate:${session_id}`).emit('webrtc_offer', { signal, from_session_id: session_id });
+        });
+
+        // Candidate → Recruiter: SDP answer
+        socket.on('webrtc_answer', ({ meeting_id, signal }) => {
+            console.log(`📡 WebRTC answer → recruiter:${meeting_id}`);
+            io.to(`recruiter:${meeting_id}`).emit('webrtc_answer', { signal, from_session_id: meeting_id });
+        });
+
+        // ICE candidate relay (bidirectional)
+        socket.on('webrtc_ice_candidate', ({ target, meeting_id, session_id, candidate }) => {
+            if (target === 'recruiter' && meeting_id) {
+                io.to(`recruiter:${meeting_id}`).emit('webrtc_ice_candidate', { candidate, from_session_id: session_id ?? '' });
+            } else if (target === 'candidate' && session_id) {
+                io.to(`candidate:${session_id}`).emit('webrtc_ice_candidate', { candidate, from_session_id: meeting_id ?? '' });
+            }
+        });
+        // ──────────────────────────────────────────────────────────────────────
 
         socket.on('disconnect', () => {
             console.log(`🔌 Socket disconnected: ${socket.id}`);

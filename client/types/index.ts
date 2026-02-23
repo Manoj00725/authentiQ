@@ -1,4 +1,5 @@
-// Shared types between client and server
+// Client-side types (re-export from shared + client-specific additions)
+// This mirrors shared/types/index.ts for use in the Next.js client
 
 export type MeetingStatus = 'waiting' | 'active' | 'ended';
 
@@ -14,9 +15,23 @@ export type EventType =
     | 'typing_fast'
     | 'session_start'
     | 'session_end'
-    | 'answer_submitted';
+    | 'answer_submitted'
+    // Coding anti-cheat events
+    | 'code_paste'
+    | 'devtools_open'
+    | 'right_click_attempt'
+    | 'keyboard_shortcut_cheat'
+    | 'ai_pattern_detected'
+    | 'rapid_solution'
+    | 'code_submitted'
+    // Video call anti-cheat
+    | 'face_not_detected'
+    | 'multiple_faces_detected'
+    | 'gaze_away';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
+
+export type CodingLanguage = 'javascript' | 'python' | 'java' | 'cpp' | 'typescript';
 
 export interface Meeting {
     id: string;
@@ -56,6 +71,34 @@ export interface ScoreUpdate {
     total_events: number;
 }
 
+export interface CodingChallenge {
+    id: string;
+    title: string;
+    description: string;
+    language: CodingLanguage;
+    starter_code: string;
+    examples?: { input: string; output: string; explanation?: string }[];
+    constraints?: string[];
+}
+
+export interface CheatAlert {
+    id: string;
+    session_id: string;
+    event_type: EventType;
+    severity: Severity;
+    message: string;
+    timestamp: string;
+    code_snapshot?: string;
+}
+
+export interface CodeUpdate {
+    session_id: string;
+    code: string;
+    language: CodingLanguage;
+    char_count: number;
+    timestamp: string;
+}
+
 export interface CreateMeetingRequest {
     recruiter_name: string;
 }
@@ -81,12 +124,26 @@ export interface MeetingDashboardData {
 }
 
 // Socket event payloads
+// WebRTC signaling
+export interface WebRTCSignal {
+    sdp?: RTCSessionDescriptionInit;
+    candidate?: RTCIceCandidateInit;
+}
+
 export interface ServerToClientEvents {
     live_event_update: (event: EventLog) => void;
     score_update: (score: ScoreUpdate) => void;
     candidate_status: (status: { joined: boolean; candidate_name?: string; monitoring_active: boolean }) => void;
     session_ended: (data: { final_score: number }) => void;
     error: (message: string) => void;
+    cheat_alert: (alert: CheatAlert) => void;
+    code_update: (update: CodeUpdate) => void;
+    question_pushed: (challenge: CodingChallenge) => void;
+    // WebRTC signaling
+    webrtc_offer: (data: { signal: WebRTCSignal; from_session_id: string }) => void;
+    webrtc_answer: (data: { signal: WebRTCSignal; from_session_id: string }) => void;
+    webrtc_ice_candidate: (data: { candidate: RTCIceCandidateInit; from_session_id: string }) => void;
+    peer_call_ready: (data: { session_id: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -95,4 +152,11 @@ export interface ClientToServerEvents {
     answer_submitted: (data: { session_id: string; answer: string; question_index: number }) => void;
     session_end: (data: { session_id: string }) => void;
     recruiter_subscribe: (data: { meeting_id: string }) => void;
+    code_update: (data: { session_id: string; code: string; language: CodingLanguage }) => void;
+    recruiter_push_question: (data: { meeting_id: string; session_id: string; challenge: CodingChallenge }) => void;
+    // WebRTC signaling
+    call_ready: (data: { meeting_id: string; session_id: string }) => void;
+    webrtc_offer: (data: { session_id: string; signal: WebRTCSignal }) => void;
+    webrtc_answer: (data: { meeting_id: string; signal: WebRTCSignal }) => void;
+    webrtc_ice_candidate: (data: { target: 'recruiter' | 'candidate'; meeting_id?: string; session_id?: string; candidate: RTCIceCandidateInit }) => void;
 }
