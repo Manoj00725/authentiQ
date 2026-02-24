@@ -68,12 +68,31 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         });
 
         peer.on('signal', (signal: WebRTCSignal) => {
-            if (initiator) {
-                // Recruiter sends offer
-                emit('webrtc_offer', { session_id: sessionId, signal });
+            if ((signal as any).type === 'offer' || (signal as any).type === 'answer' || (signal as any).sdp) {
+                if (initiator) {
+                    emit('webrtc_offer', { session_id: sessionId, signal });
+                } else {
+                    emit('webrtc_answer', { meeting_id: meetingId, signal });
+                }
             } else {
-                // Candidate sends answer
-                emit('webrtc_answer', { meeting_id: meetingId, signal });
+                // ICE candidate trickle
+                if (initiator) {
+                    // Recruiter → Candidate
+                    emit('webrtc_ice_candidate', {
+                        target: 'candidate',
+                        session_id: sessionId,
+                        meeting_id: meetingId,
+                        candidate: signal,
+                    });
+                } else {
+                    // Candidate → Recruiter
+                    emit('webrtc_ice_candidate', {
+                        target: 'recruiter',
+                        session_id: sessionId,
+                        meeting_id: meetingId,
+                        candidate: signal,
+                    });
+                }
             }
         });
 

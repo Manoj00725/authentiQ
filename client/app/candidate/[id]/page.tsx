@@ -6,6 +6,7 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { useMonitoring } from '@/hooks/useMonitoring';
 import { useVideoCall } from '@/hooks/useVideoCall';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
+import { useTabLock } from '@/hooks/useTabLock';
 import type { BehaviorEvent, Severity, CodingChallenge, CodingLanguage } from '@/types';
 
 const DEFAULT_CHALLENGES: CodingChallenge[] = [
@@ -116,23 +117,27 @@ export default function CandidatePage() {
 
     const { attachToCodeEditor } = useMonitoring({ sessionId, onEvent: handleBehaviorEvent });
 
+    // ── Tab-switch lock ─────────────────────────────────────────────────────────
+    const handleTabSwitch = useCallback(() => {
+        handleBehaviorEvent({
+            event_type: 'tab_switch',
+            timestamp: new Date().toISOString(),
+            severity: 'high',
+        });
+    }, [handleBehaviorEvent]);
+
+    const { showOverlay: tabSwitchOverlay, lockCount: tabSwitchCount, countdown: tabCountdown, dismissOverlay: dismissTabOverlay } = useTabLock({
+        enabled: !!sessionId && !sessionEnded,
+        onTabSwitch: handleTabSwitch,
+    });
+
     // Attach anti-cheat to code textarea
     useEffect(() => {
         const cleanup = attachToCodeEditor(codeRef.current);
         return cleanup;
     }, [attachToCodeEditor]);
 
-    // Fullscreen
-    useEffect(() => {
-        document.documentElement.requestFullscreen?.().catch(() => { });
-        const onFsChange = () => {
-            if (!document.fullscreenElement) {
-                handleBehaviorEvent({ event_type: 'fullscreen_exit', timestamp: new Date().toISOString(), severity: 'high' });
-            }
-        };
-        document.addEventListener('fullscreenchange', onFsChange);
-        return () => document.removeEventListener('fullscreenchange', onFsChange);
-    }, [handleBehaviorEvent]);
+    // (Fullscreen monitoring handled by useMonitoring hook)
 
     // Timer
     useEffect(() => {
@@ -451,6 +456,36 @@ export default function CandidatePage() {
                     </div>
                 </div>
             </div>
+
+            {/* ── TAB SWITCH PUNISHMENT OVERLAY ─────────────────────────────── */}
+            {tabSwitchOverlay && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(8px)' }}>
+                    <div className="text-center px-10 py-12 rounded-2xl max-w-md w-full mx-4"
+                        style={{ background: 'rgba(239,68,68,0.08)', border: '2px solid rgba(239,68,68,0.5)', boxShadow: '0 0 60px rgba(239,68,68,0.2)' }}>
+                        <div className="text-6xl mb-5">🚨</div>
+                        <h2 className="text-2xl font-black mb-3" style={{ color: '#f87171' }}>Tab Switch Detected!</h2>
+                        <p className="text-sm leading-relaxed mb-2" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                            Navigating away from the interview tab is not allowed. This incident has been flagged and reported to the recruiter.
+                        </p>
+                        <p className="text-xs mb-6" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                            Total violations: <span style={{ color: '#f87171', fontWeight: 700 }}>{tabSwitchCount}</span>
+                        </p>
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-black"
+                                style={{ background: 'rgba(239,68,68,0.2)', border: '3px solid rgba(239,68,68,0.6)', color: '#f87171' }}>
+                                {tabCountdown}
+                            </div>
+                            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>Auto-resuming in {tabCountdown}s</p>
+                            <button onClick={dismissTabOverlay}
+                                className="mt-2 px-8 py-2.5 rounded-xl font-bold text-sm transition-all"
+                                style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)', color: '#f87171' }}>
+                                I Understand — Resume Interview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Session ended overlay */}
             {sessionEnded && (

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import type { ServerToClientEvents, ClientToServerEvents } from '../../../shared/types';
+import type { ServerToClientEvents, ClientToServerEvents } from '@/types';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -18,19 +18,13 @@ export function useWebSocket() {
         return () => { socket.disconnect(); };
     }, []);
 
-    const emit = useCallback(<E extends keyof ClientToServerEvents>(
-        event: E,
-        data: Parameters<ClientToServerEvents[E]>[0]
-    ) => {
-        socketRef.current?.emit(event as string, data);
+    const emit = useCallback((event: string, data: any) => {
+        (socketRef.current as any)?.emit(event, data);
     }, []);
 
-    const on = useCallback(<E extends keyof ServerToClientEvents>(
-        event: E,
-        handler: ServerToClientEvents[E]
-    ) => {
-        socketRef.current?.on(event as string, handler as any);
-        return () => { socketRef.current?.off(event as string, handler as any); };
+    const on = useCallback((event: string, handler: (...args: any[]) => void) => {
+        (socketRef.current as any)?.on(event, handler);
+        return () => { (socketRef.current as any)?.off(event, handler); };
     }, []);
 
     return { connected, emit, on, socket: socketRef };

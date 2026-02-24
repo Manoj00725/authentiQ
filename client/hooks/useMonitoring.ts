@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import type { BehaviorEvent, EventType, Severity } from '../../../shared/types';
+import type { BehaviorEvent, EventType, Severity } from '@/types';
 
 interface MonitoringOptions {
     sessionId: string;
@@ -26,16 +26,11 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
     useEffect(() => {
         if (!sessionId) return;
 
-        // Tab visibility (Page Visibility API)
-        const onVis = () => {
-            if (document.hidden) emitEvent('tab_switch', 'high');
-        };
-        document.addEventListener('visibilitychange', onVis);
+        // NOTE: tab_switch and window_blur are handled by useTabLock
+        // to avoid duplicate events. Only fullscreen is monitored here.
 
-        // Window blur / focus
-        const onBlur = () => emitEvent('window_blur', 'medium');
+        // Window focus (return event, non-cheating)
         const onFocus = () => emitEvent('window_focus', 'low');
-        window.addEventListener('blur', onBlur);
         window.addEventListener('focus', onFocus);
 
         // Fullscreen monitoring
@@ -52,8 +47,6 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
         document.documentElement.requestFullscreen?.().catch(() => { });
 
         return () => {
-            document.removeEventListener('visibilitychange', onVis);
-            window.removeEventListener('blur', onBlur);
             window.removeEventListener('focus', onFocus);
             document.removeEventListener('fullscreenchange', onFsChange);
         };
