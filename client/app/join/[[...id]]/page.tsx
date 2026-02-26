@@ -112,9 +112,7 @@ export default function JoinPage() {
                                     className="mt-1 accent-indigo-500"
                                 />
                                 <label htmlFor="consent" className="text-xs leading-relaxed cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-                                    <strong style={{ color: 'var(--text-primary)' }}>Monitoring Consent:</strong> I understand that behavioral signals
-                                    (tab switches, paste events, typing patterns, fullscreen status) will be monitored during this interview
-                                    for authenticity assessment. No personal data is stored after the session.
+                                    <strong style={{ color: 'var(--text-primary)' }}>Monitoring Consent:</strong> I understand that this interview runs in <strong style={{ color: 'var(--text-primary)' }}>enforced fullscreen</strong> and that my <strong style={{ color: 'var(--text-primary)' }}>screen, camera, and behavioral signals</strong> (tab switches, paste events, typing patterns, fullscreen status) will be monitored in real-time by the recruiter for authenticity assessment. No personal data is stored after the session.
                                 </label>
                             </div>
                         </div>

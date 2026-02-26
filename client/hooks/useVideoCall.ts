@@ -24,8 +24,16 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
     const [isMuted, setIsMuted] = useState(false);
     const [isCameraOff, setIsCameraOff] = useState(false);
 
+    // ── Screen share state ─────────────────────────────────────────────────
+    const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+    const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
+
     const peerRef = useRef<any>(null);
     const localStreamRef = useRef<MediaStream | null>(null);
+    // Separate peer for screen share
+    const screenPeerRef = useRef<any>(null);
+    const screenStreamRef = useRef<MediaStream | null>(null);
 
     // Get local media stream
     const getLocalStream = useCallback(async () => {
@@ -77,7 +85,6 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
             } else {
                 // ICE candidate trickle
                 if (initiator) {
-                    // Recruiter → Candidate
                     emit('webrtc_ice_candidate', {
                         target: 'candidate',
                         session_id: sessionId,
@@ -85,7 +92,6 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
                         candidate: signal,
                     });
                 } else {
-                    // Candidate → Recruiter
                     emit('webrtc_ice_candidate', {
                         target: 'recruiter',
                         session_id: sessionId,
@@ -117,6 +123,93 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         return peer;
     }, [sessionId, meetingId, emit]);
 
+    // ── Screen share peer ──────────────────────────────────────────────────
+    const createScreenPeer = useCallback((initiator: boolean, stream: MediaStream) => {
+        if (!SimplePeer) return null;
+        const peer = new SimplePeer({
+            initiator,
+            stream,
+            trickle: true,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                ],
+            },
+        });
+
+        peer.on('signal', (signal: any) => {
+            if (signal.type === 'offer' || signal.type === 'answer' || signal.sdp) {
+                if (initiator) {
+                    // Candidate → Recruiter
+                    emit('screen_share_offer', { meeting_id: meetingId, session_id: sessionId, signal });
+                } else {
+                    // Recruiter → Candidate
+                    emit('screen_share_answer', { session_id: sessionId, signal });
+                }
+            } else {
+                // ICE
+                if (initiator) {
+                    emit('screen_share_ice', { target: 'recruiter', meeting_id: meetingId, session_id: sessionId, candidate: signal });
+                } else {
+                    emit('screen_share_ice', { target: 'candidate', meeting_id: meetingId, session_id: sessionId, candidate: signal });
+                }
+            }
+        });
+
+        peer.on('stream', (stream: MediaStream) => {
+            setRemoteScreenStream(stream);
+        });
+
+        peer.on('error', (err: Error) => {
+            console.error('Screen share peer error:', err);
+        });
+
+        peer.on('close', () => {
+            setRemoteScreenStream(null);
+        });
+
+        return peer;
+    }, [meetingId, sessionId, emit]);
+
+    /** Candidate: request screen capture and start sharing */
+    const startScreenShare = useCallback(async () => {
+        await loadSimplePeer();
+        try {
+            const stream = await (navigator.mediaDevices as any).getDisplayMedia({
+                video: { cursor: 'always' },
+                audio: false,
+            });
+            screenStreamRef.current = stream;
+            setScreenStream(stream);
+            setIsScreenSharing(true);
+
+            const peer = createScreenPeer(true, stream);
+            if (peer) screenPeerRef.current = peer;
+
+            // When user stops via browser's built-in stop button
+            stream.getVideoTracks()[0].addEventListener('ended', () => {
+                stopScreenShare();
+            });
+        } catch (err) {
+            console.warn('Screen share cancelled or failed:', err);
+        }
+    }, [loadSimplePeer, createScreenPeer]);
+
+    const stopScreenShare = useCallback(() => {
+        if (screenPeerRef.current) {
+            screenPeerRef.current.destroy();
+            screenPeerRef.current = null;
+        }
+        if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(t => t.stop());
+            screenStreamRef.current = null;
+            setScreenStream(null);
+        }
+        setIsScreenSharing(false);
+        emit('screen_share_stopped', { meeting_id: meetingId });
+    }, [emit, meetingId]);
+
     // Candidate: start camera → signal readiness
     const startAsCandidate = useCallback(async () => {
         await loadSimplePeer();
@@ -124,7 +217,6 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         if (!stream) return;
 
         setCallState('waiting');
-        // Tell recruiter we're ready
         emit('call_ready', { meeting_id: meetingId, session_id: sessionId });
     }, [loadSimplePeer, getLocalStream, emit, meetingId, sessionId]);
 
@@ -155,7 +247,18 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
             localStreamRef.current = null;
             setLocalStream(null);
         }
+        if (screenPeerRef.current) {
+            screenPeerRef.current.destroy();
+            screenPeerRef.current = null;
+        }
+        if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(t => t.stop());
+            screenStreamRef.current = null;
+            setScreenStream(null);
+        }
         setRemoteStream(null);
+        setRemoteScreenStream(null);
+        setIsScreenSharing(false);
         setCallState('ended');
     }, []);
 
@@ -163,7 +266,7 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
     const toggleMute = useCallback(() => {
         if (localStreamRef.current) {
             localStreamRef.current.getAudioTracks().forEach(t => {
-                t.enabled = isMuted; // flip current muted state
+                t.enabled = isMuted;
             });
             setIsMuted(prev => !prev);
         }
@@ -173,7 +276,7 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
     const toggleCamera = useCallback(() => {
         if (localStreamRef.current) {
             localStreamRef.current.getVideoTracks().forEach(t => {
-                t.enabled = isCameraOff; // flip
+                t.enabled = isCameraOff;
             });
             setIsCameraOff(prev => !prev);
         }
@@ -184,7 +287,7 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         const unsubs: (() => void)[] = [];
 
         if (role === 'recruiter') {
-            // Recruiter: candidate signals readiness → create offer
+            // Candidate signals readiness → create webcam offer
             unsubs.push(on('peer_call_ready', async ({ session_id }: { session_id: string }) => {
                 await loadSimplePeer();
                 const stream = localStreamRef.current;
@@ -194,23 +297,39 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
                 if (peer) peerRef.current = peer;
             }));
 
-            // Recruiter: receive SDP answer from candidate
+            // Receive SDP answer from candidate
             unsubs.push(on('webrtc_answer', ({ signal }: { signal: WebRTCSignal }) => {
-                if (peerRef.current) {
-                    peerRef.current.signal(signal);
+                if (peerRef.current) peerRef.current.signal(signal);
+            }));
+
+            // Receive ICE from candidate
+            unsubs.push(on('webrtc_ice_candidate', ({ candidate }: any) => {
+                if (peerRef.current) peerRef.current.signal({ candidate });
+            }));
+
+            // ── Screen share: recruiter receives offer from candidate ────────
+            unsubs.push(on('screen_share_offer', async ({ signal }: any) => {
+                await loadSimplePeer();
+                // We need a dummy stream (audio-only) to answer — or just pass an empty stream
+                // Actually simple-peer can answer without a stream if we give it initiator: false
+                const peer = createScreenPeer(false, new MediaStream());
+                if (peer) {
+                    screenPeerRef.current = peer;
+                    peer.signal(signal);
                 }
             }));
 
-            // Recruiter: receive ICE candidate from candidate
-            unsubs.push(on('webrtc_ice_candidate', ({ candidate }: any) => {
-                if (peerRef.current) {
-                    peerRef.current.signal({ candidate });
-                }
+            unsubs.push(on('screen_share_ice', ({ candidate }: any) => {
+                if (screenPeerRef.current) screenPeerRef.current.signal({ candidate });
+            }));
+
+            unsubs.push(on('screen_share_stopped', () => {
+                setRemoteScreenStream(null);
             }));
         }
 
         if (role === 'candidate') {
-            // Candidate: receive SDP offer from recruiter
+            // Receive SDP offer from recruiter (webcam)
             unsubs.push(on('webrtc_offer', async ({ signal }: { signal: WebRTCSignal }) => {
                 await loadSimplePeer();
                 const stream = localStreamRef.current;
@@ -223,24 +342,31 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
                 }
             }));
 
-            // Candidate: receive ICE from recruiter
+            // ICE from recruiter (webcam)
             unsubs.push(on('webrtc_ice_candidate', ({ candidate }: any) => {
-                if (peerRef.current) {
-                    peerRef.current.signal({ candidate });
-                }
+                if (peerRef.current) peerRef.current.signal({ candidate });
+            }));
+
+            // Screen share ICE from recruiter
+            unsubs.push(on('screen_share_answer', ({ signal }: any) => {
+                if (screenPeerRef.current) screenPeerRef.current.signal(signal);
+            }));
+
+            unsubs.push(on('screen_share_ice', ({ candidate }: any) => {
+                if (screenPeerRef.current) screenPeerRef.current.signal({ candidate });
             }));
         }
 
         return () => unsubs.forEach(fn => fn());
-    }, [role, on, createPeer, loadSimplePeer]);
+    }, [role, on, createPeer, createScreenPeer, loadSimplePeer]);
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
             if (peerRef.current) peerRef.current.destroy();
-            if (localStreamRef.current) {
-                localStreamRef.current.getTracks().forEach(t => t.stop());
-            }
+            if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop());
+            if (screenPeerRef.current) screenPeerRef.current.destroy();
+            if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(t => t.stop());
         };
     }, []);
 
@@ -255,5 +381,11 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         endCall,
         toggleMute,
         toggleCamera,
+        // Screen share
+        screenStream,
+        remoteScreenStream,
+        isScreenSharing,
+        startScreenShare,
+        stopScreenShare,
     };
 }

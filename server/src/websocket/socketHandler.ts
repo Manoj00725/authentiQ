@@ -188,6 +188,35 @@ export function setupSocketHandlers(
         });
         // ──────────────────────────────────────────────────────────────────────
 
+        // ─── Screen Share Signaling Relay ──────────────────────────────────────
+        // Candidate → Recruiter: screen share SDP offer
+        socket.on('screen_share_offer', ({ meeting_id, session_id, signal }) => {
+            console.log(`🖥️  Screen-share offer → recruiter:${meeting_id}`);
+            io.to(`recruiter:${meeting_id}`).emit('screen_share_offer', { signal, session_id });
+        });
+
+        // Recruiter → Candidate: screen share SDP answer
+        socket.on('screen_share_answer', ({ session_id, signal }) => {
+            console.log(`🖥️  Screen-share answer → candidate:${session_id}`);
+            io.to(`candidate:${session_id}`).emit('screen_share_answer', { signal });
+        });
+
+        // ICE candidates for screen share (bidirectional)
+        socket.on('screen_share_ice', ({ target, meeting_id, session_id, candidate }) => {
+            if (target === 'recruiter' && meeting_id) {
+                io.to(`recruiter:${meeting_id}`).emit('screen_share_ice', { candidate });
+            } else if (target === 'candidate' && session_id) {
+                io.to(`candidate:${session_id}`).emit('screen_share_ice', { candidate });
+            }
+        });
+
+        // Candidate stopped screen sharing
+        socket.on('screen_share_stopped', ({ meeting_id }) => {
+            console.log(`🖥️  Screen share stopped for meeting: ${meeting_id}`);
+            io.to(`recruiter:${meeting_id}`).emit('screen_share_stopped', {});
+        });
+        // ──────────────────────────────────────────────────────────────────────
+
         socket.on('disconnect', () => {
             console.log(`🔌 Socket disconnected: ${socket.id}`);
         });

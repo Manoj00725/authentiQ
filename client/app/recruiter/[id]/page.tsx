@@ -116,7 +116,7 @@ export default function RecruiterDashboard() {
     const [typingData, setTypingData] = useState<{ t: string; wpm: number }[]>([]);
     const [sessionEnded, setSessionEnded] = useState(false);
     const [elapsed, setElapsed] = useState(0);
-    const [activeTab, setActiveTab] = useState<'video' | 'code' | 'charts'>('video');
+    const [activeTab, setActiveTab] = useState<'video' | 'code' | 'charts' | 'screen'>('video');
     const [showPushModal, setShowPushModal] = useState(false);
     const [candidateSessionId, setCandidateSessionId] = useState('');
     const [expandedAlertId, setExpandedAlertId] = useState<string | null>(null);
@@ -124,9 +124,14 @@ export default function RecruiterDashboard() {
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const screenVideoRef = useRef<HTMLVideoElement>(null);
 
     // ── WebRTC video call ──────────────────────────────────────────────────────
-    const { callState, localStream, remoteStream, isMuted, isCameraOff, startCall, endCall, toggleMute, toggleCamera } = useVideoCall({
+    const {
+        callState, localStream, remoteStream, isMuted, isCameraOff,
+        startCall, endCall, toggleMute, toggleCamera,
+        remoteScreenStream, isScreenSharing: candidateScreenSharing,
+    } = useVideoCall({
         role: 'recruiter', meetingId, sessionId: candidateSessionId || meetingId, emit, on,
     });
 
@@ -137,6 +142,14 @@ export default function RecruiterDashboard() {
     useEffect(() => {
         if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream;
     }, [remoteStream]);
+
+    useEffect(() => {
+        if (screenVideoRef.current && remoteScreenStream) {
+            screenVideoRef.current.srcObject = remoteScreenStream;
+            // Auto switch to screen tab when screen share starts
+            setActiveTab('screen');
+        }
+    }, [remoteScreenStream]);
 
     // Fetch meeting data
     useEffect(() => {
@@ -195,6 +208,7 @@ export default function RecruiterDashboard() {
 
     const tabs = [
         { id: 'video' as const, label: '📹 Video Call', badge: callState === 'connected' ? 'LIVE' : undefined },
+        { id: 'screen' as const, label: '🖥️ Screen Share', badge: remoteScreenStream ? 'LIVE' : undefined },
         { id: 'code' as const, label: '💻 Live Code', badge: liveCode ? '●' : undefined },
         { id: 'charts' as const, label: '📊 Analytics' },
     ];
@@ -410,6 +424,60 @@ export default function RecruiterDashboard() {
                                 </div>
                             </div>
                         </>
+                    )}
+
+                    {/* ── SCREEN SHARE TAB ────────────────────────────────────────── */}
+                    {activeTab === 'screen' && (
+                        <div className="glass-card p-4 flex flex-col gap-3">
+                            <div className="flex items-center justify-between">
+                                <p className="label mb-0">🖥️ Candidate Screen Share</p>
+                                <div className="flex items-center gap-2">
+                                    {remoteScreenStream ? (
+                                        <span className="text-xs px-2 py-0.5 rounded-full font-bold animate-pulse"
+                                            style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }}>
+                                            LIVE
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#64748b' }}>
+                                            Waiting...
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Screen share video */}
+                            <div className="relative rounded-xl overflow-hidden"
+                                style={{ background: '#000', minHeight: '340px', border: remoteScreenStream ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.08)', boxShadow: remoteScreenStream ? '0 0 20px rgba(99,102,241,0.15)' : 'none' }}>
+                                <video ref={screenVideoRef} autoPlay playsInline
+                                    className="w-full object-contain"
+                                    style={{ minHeight: '340px', background: '#000', display: remoteScreenStream ? 'block' : 'none' }} />
+                                {!remoteScreenStream && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                                        <span className="text-5xl">🖥️</span>
+                                        <span className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.4)' }}>
+                                            {candidateStatus.joined ? 'Waiting for candidate to share screen...' : 'Waiting for candidate to join...'}
+                                        </span>
+                                        <p className="text-xs text-center max-w-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                                            Screen share starts automatically once the video call is connected.
+                                        </p>
+                                    </div>
+                                )}
+                                {remoteScreenStream && (
+                                    <div className="absolute top-3 left-3">
+                                        <div className="text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1.5"
+                                            style={{ background: 'rgba(0,0,0,0.75)', color: 'rgba(255,255,255,0.9)' }}>
+                                            <span style={{ width: 6, height: 6, background: '#10b981', borderRadius: '50%', display: 'inline-block' }} className="animate-pulse" />
+                                            {candidateStatus.candidate_name || 'Candidate'}'s screen
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
+                                You are viewing the candidate's screen in real-time. Any suspicious activity is logged automatically.
+                            </p>
+                        </div>
                     )}
 
                     {/* ── LIVE CODE TAB ───────────────────────────────────────────── */}

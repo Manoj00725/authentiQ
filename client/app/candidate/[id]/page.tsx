@@ -7,6 +7,7 @@ import { useMonitoring } from '@/hooks/useMonitoring';
 import { useVideoCall } from '@/hooks/useVideoCall';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
 import { useTabLock } from '@/hooks/useTabLock';
+import { useFullscreen } from '@/hooks/useFullscreen';
 import type { BehaviorEvent, Severity, CodingChallenge, CodingLanguage } from '@/types';
 
 const DEFAULT_CHALLENGES: CodingChallenge[] = [
@@ -67,11 +68,13 @@ export default function CandidatePage() {
     const [warnings, setWarnings] = useState<string[]>([]);
     const [sessionEnded, setSessionEnded] = useState(false);
     const [elapsed, setElapsed] = useState(0);
-    const [videoMinimized, setVideoMinimized] = useState(false);
+    // Fullscreen enforcement overlay (when user forces-exit fullscreen)
+    const [showFsOverlay, setShowFsOverlay] = useState(false);
 
     const codeRef = useRef<HTMLTextAreaElement>(null);
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const screenVideoRef = useRef<HTMLVideoElement>(null);
     const streamDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
     // ── WebSocket lifecycle ────────────────────────────────────────────────────
@@ -131,13 +134,39 @@ export default function CandidatePage() {
         onTabSwitch: handleTabSwitch,
     });
 
+    // ── Fullscreen enforcement ─────────────────────────────────────────────────
+    const handleFullscreenExit = useCallback(() => {
+        handleBehaviorEvent({
+            event_type: 'fullscreen_exit',
+            timestamp: new Date().toISOString(),
+            severity: 'high',
+        });
+        setShowFsOverlay(true);
+    }, [handleBehaviorEvent]);
+
+    const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen({
+        enabled: !!sessionId && !sessionEnded,
+        onExit: handleFullscreenExit,
+    });
+
+    // Auto-enter fullscreen when session is ready (requires a prior user gesture — the "Join" click)
+    useEffect(() => {
+        if (connected && meetingId && !sessionEnded) {
+            const t = setTimeout(() => enterFullscreen(), 800);
+            return () => clearTimeout(t);
+        }
+    }, [connected, meetingId, sessionEnded, enterFullscreen]);
+
+    // Dismiss overlay when fullscreen re-enters
+    useEffect(() => {
+        if (isFullscreen) setShowFsOverlay(false);
+    }, [isFullscreen]);
+
     // Attach anti-cheat to code textarea
     useEffect(() => {
         const cleanup = attachToCodeEditor(codeRef.current);
         return cleanup;
     }, [attachToCodeEditor]);
-
-    // (Fullscreen monitoring handled by useMonitoring hook)
 
     // Timer
     useEffect(() => {
@@ -146,9 +175,11 @@ export default function CandidatePage() {
     }, []);
 
     // ── Video call ─────────────────────────────────────────────────────────────
-    const { callState, localStream, remoteStream, isMuted, isCameraOff, startCall, endCall, toggleMute, toggleCamera } = useVideoCall({
-        role: 'candidate', meetingId, sessionId, emit, on,
-    });
+    const {
+        callState, localStream, remoteStream,
+        isMuted, isCameraOff, startCall, endCall, toggleMute, toggleCamera,
+        screenStream, isScreenSharing, startScreenShare, stopScreenShare,
+    } = useVideoCall({ role: 'candidate', meetingId, sessionId, emit, on });
 
     // Attach streams to video elements
     useEffect(() => {
@@ -163,6 +194,12 @@ export default function CandidatePage() {
         }
     }, [remoteStream]);
 
+    useEffect(() => {
+        if (screenVideoRef.current && screenStream) {
+            screenVideoRef.current.srcObject = screenStream;
+        }
+    }, [screenStream]);
+
     // Auto-start video call when connected
     useEffect(() => {
         if (connected && meetingId && callState === 'idle') {
@@ -171,7 +208,15 @@ export default function CandidatePage() {
         }
     }, [connected, meetingId, callState, startCall]);
 
-    // ── Face detection (runs on candidate's local video) ─────────────────────
+    // Auto-start screen share once call is connected
+    useEffect(() => {
+        if (callState === 'connected' && !isScreenSharing) {
+            const t = setTimeout(() => startScreenShare(), 2000);
+            return () => clearTimeout(t);
+        }
+    }, [callState, isScreenSharing, startScreenShare]);
+
+    // ── Face detection ─────────────────────────────────────────────────────────
     const handleFaceEvent = useCallback((eventType: 'face_not_detected' | 'multiple_faces_detected' | 'gaze_away') => {
         const severityMap: Record<string, Severity> = {
             face_not_detected: 'high', multiple_faces_detected: 'critical', gaze_away: 'medium',
@@ -196,14 +241,12 @@ export default function CandidatePage() {
         }, 500);
     }, [emit, sessionId, language]);
 
-    // Language change resets starter
     const handleLanguageChange = useCallback((lang: CodingLanguage) => {
         setLanguage(lang);
         const challenge = challenges[currentIndex];
         setCode(challenge.language === lang ? challenge.starter_code : STARTER_CODE[lang]);
     }, [challenges, currentIndex]);
 
-    // Next question
     const handleSubmit = useCallback(() => {
         emit('answer_submitted', { session_id: sessionId, answer: code, question_index: currentIndex });
         if (currentIndex + 1 < challenges.length) {
@@ -215,10 +258,11 @@ export default function CandidatePage() {
     }, [emit, sessionId, code, currentIndex, challenges]);
 
     const handleEndInterview = useCallback(() => {
+        exitFullscreen();
         emit('session_end', { session_id: sessionId });
         endCall();
         setSessionEnded(true);
-    }, [emit, sessionId, endCall]);
+    }, [exitFullscreen, emit, sessionId, endCall]);
 
     const formatTime = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
     const currentChallenge = challenges[currentIndex];
@@ -238,6 +282,22 @@ export default function CandidatePage() {
                         <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
                             style={{ background: `${faceCfg.color}18`, border: `1px solid ${faceCfg.color}40`, color: faceCfg.color }}>
                             {faceCfg.icon} {faceCfg.label}
+                        </span>
+                    )}
+                    {/* Fullscreen badge */}
+                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        style={{
+                            background: isFullscreen ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+                            border: `1px solid ${isFullscreen ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                            color: isFullscreen ? '#10b981' : '#f87171',
+                        }}>
+                        {isFullscreen ? '⛶ Fullscreen' : '⚠️ Not Fullscreen'}
+                    </span>
+                    {/* Screen share badge */}
+                    {isScreenSharing && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold animate-pulse"
+                            style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#a5b4fc' }}>
+                            🖥️ Screen sharing
                         </span>
                     )}
                 </div>
@@ -269,7 +329,6 @@ export default function CandidatePage() {
             {/* ── VIDEO CALL BAR ─────────────────────────────────────────────────────── */}
             <div className="shrink-0 border-b" style={{ borderColor: 'var(--border)', background: 'rgba(0,0,0,0.4)' }}>
                 <div className="flex items-center justify-between px-4 py-1.5">
-                    {/* Call state indicator */}
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>
                             {callState === 'connected' ? '📹 Video Call Active' : callState === 'waiting' ? '⏳ Waiting for recruiter...' : callState === 'connecting' ? '🔄 Connecting...' : callState === 'error' ? '❌ Connection failed' : '📹 Video Call'}
@@ -282,7 +341,6 @@ export default function CandidatePage() {
                         )}
                     </div>
                     <div className="flex items-center gap-2">
-                        {/* Mic / Camera toggles */}
                         <button onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}
                             className="w-7 h-7 rounded-full flex items-center justify-center text-sm transition-all"
                             style={{ background: isMuted ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
@@ -293,55 +351,70 @@ export default function CandidatePage() {
                             style={{ background: isCameraOff ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
                             {isCameraOff ? '📷' : '📹'}
                         </button>
-                        <button onClick={() => setVideoMinimized(v => !v)}
-                            className="w-7 h-7 rounded-full flex items-center justify-center text-xs"
-                            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
-                            {videoMinimized ? '▼' : '▲'}
+                        {/* Screen share toggle */}
+                        <button
+                            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+                            title={isScreenSharing ? 'Stop screen share' : 'Share screen'}
+                            className="w-7 h-7 rounded-full flex items-center justify-center text-sm transition-all"
+                            style={{
+                                background: isScreenSharing ? 'rgba(99,102,241,0.35)' : 'rgba(255,255,255,0.08)',
+                                border: isScreenSharing ? '1px solid rgba(99,102,241,0.6)' : '1px solid rgba(255,255,255,0.12)',
+                            }}>
+                            🖥️
                         </button>
                     </div>
                 </div>
 
-                {!videoMinimized && (
-                    <div className="flex items-center gap-3 px-4 pb-3">
-                        {/* Recruiter's video (large) */}
-                        <div className="relative rounded-xl overflow-hidden flex-1" style={{ maxHeight: '160px', background: '#000', border: '1px solid rgba(255,255,255,0.08)', minHeight: '120px' }}>
-                            <video ref={remoteVideoRef} autoPlay playsInline
-                                className="w-full h-full object-cover"
-                                style={{ maxHeight: '160px', display: remoteStream ? 'block' : 'none' }} />
-                            {!remoteStream && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-                                    <span className="text-2xl">👤</span>
-                                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Recruiter camera</span>
-                                </div>
-                            )}
-                            <div className="absolute bottom-2 left-2 text-xs font-semibold px-2 py-0.5 rounded"
-                                style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}>
-                                Recruiter
+                <div className="flex items-center gap-3 px-4 pb-3">
+                    {/* Recruiter's video (large) */}
+                    <div className="relative rounded-xl overflow-hidden flex-1" style={{ maxHeight: '140px', background: '#000', border: '1px solid rgba(255,255,255,0.08)', minHeight: '105px' }}>
+                        <video ref={remoteVideoRef} autoPlay playsInline
+                            className="w-full h-full object-cover"
+                            style={{ maxHeight: '140px', display: remoteStream ? 'block' : 'none' }} />
+                        {!remoteStream && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                                <span className="text-2xl">👤</span>
+                                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Recruiter camera</span>
                             </div>
-                        </div>
-
-                        {/* Candidate's own camera (small PiP) */}
-                        <div className="relative rounded-xl overflow-hidden shrink-0" style={{ width: '140px', height: '105px', background: '#000', border: `2px solid ${faceCfg.color}60` }}>
-                            <video ref={localVideoRef} autoPlay playsInline muted
-                                className="w-full h-full object-cover mirror-video"
-                                style={{ display: localStream ? 'block' : 'none', transform: 'scaleX(-1)' }} />
-                            {!localStream && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-                                    <span className="text-2xl">📷</span>
-                                    <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Your camera</span>
-                                </div>
-                            )}
-                            <div className="absolute bottom-1 left-1 text-xs font-semibold px-1.5 py-0.5 rounded"
-                                style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}>
-                                You
-                            </div>
-                            <div className="absolute top-1 right-1 text-xs font-bold px-1.5 py-0.5 rounded"
-                                style={{ background: `${faceCfg.color}22`, color: faceCfg.color, border: `1px solid ${faceCfg.color}40` }}>
-                                {faceCfg.icon}
-                            </div>
+                        )}
+                        <div className="absolute bottom-2 left-2 text-xs font-semibold px-2 py-0.5 rounded"
+                            style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}>
+                            Recruiter
                         </div>
                     </div>
-                )}
+
+                    {/* Candidate's own camera (PiP) */}
+                    <div className="relative rounded-xl overflow-hidden shrink-0" style={{ width: '120px', height: '90px', background: '#000', border: `2px solid ${faceCfg.color}60` }}>
+                        <video ref={localVideoRef} autoPlay playsInline muted
+                            className="w-full h-full object-cover"
+                            style={{ display: localStream ? 'block' : 'none', transform: 'scaleX(-1)' }} />
+                        {!localStream && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                                <span className="text-2xl">📷</span>
+                                <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Your camera</span>
+                            </div>
+                        )}
+                        <div className="absolute bottom-1 left-1 text-xs font-semibold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(0,0,0,0.6)', color: 'rgba(255,255,255,0.8)' }}>
+                            You
+                        </div>
+                        <div className="absolute top-1 right-1 text-xs font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: `${faceCfg.color}22`, color: faceCfg.color, border: `1px solid ${faceCfg.color}40` }}>
+                            {faceCfg.icon}
+                        </div>
+                    </div>
+
+                    {/* Screen share preview (candidate self-view, tiny) */}
+                    {isScreenSharing && (
+                        <div className="relative rounded-xl overflow-hidden shrink-0" style={{ width: '150px', height: '90px', background: '#000', border: '2px solid rgba(99,102,241,0.5)' }}>
+                            <video ref={screenVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                            <div className="absolute bottom-1 left-1 text-xs font-semibold px-1.5 py-0.5 rounded"
+                                style={{ background: 'rgba(0,0,0,0.7)', color: '#a5b4fc' }}>
+                                🖥️ Your screen
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* ── MAIN CONTENT: Question + Code Editor ─────────────────────────────── */}
@@ -389,7 +462,7 @@ export default function CandidatePage() {
 
                     <div className="mt-auto pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
                         <p className="text-xs text-center mb-3" style={{ color: 'var(--text-muted)' }}>
-                            🛡️ AuthentiQ monitors behavioral signals for fairness. No screen recording.
+                            🛡️ AuthentiQ monitors behavioral signals. Screen & face visible to recruiter.
                         </p>
                         <div className="flex gap-2">
                             <button onClick={handleEndInterview}
@@ -397,9 +470,8 @@ export default function CandidatePage() {
                                 style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
                                 End Interview
                             </button>
-                            <button onClick={handleSubmit}
-                                className="flex-1 btn-primary py-2 text-sm">
-                                Submit & Next →
+                            <button onClick={handleSubmit} className="flex-1 btn-primary py-2 text-sm">
+                                Submit &amp; Next →
                             </button>
                         </div>
                     </div>
@@ -407,7 +479,6 @@ export default function CandidatePage() {
 
                 {/* RIGHT: Code Editor */}
                 <div className="w-7/12 flex flex-col overflow-hidden">
-                    {/* Language selector + metrics */}
                     <div className="flex items-center justify-between px-4 py-2 border-b shrink-0"
                         style={{ borderColor: 'var(--border)', background: 'rgba(0,0,0,0.3)' }}>
                         <div className="flex gap-1">
@@ -432,30 +503,47 @@ export default function CandidatePage() {
                         </div>
                     </div>
 
-                    {/* Code editor area */}
                     <div className="flex flex-1 overflow-hidden">
-                        {/* Line numbers */}
                         <div className="select-none text-right px-3 pt-3 text-xs font-mono leading-6 shrink-0 overflow-hidden"
                             style={{ color: 'rgba(99,102,241,0.35)', background: 'rgba(0,0,0,0.2)', minWidth: '2.5rem', lineHeight: '1.5rem' }}>
                             {lines.map((_, i) => <div key={i} style={{ height: '1.5rem' }}>{i + 1}</div>)}
                         </div>
-                        {/* Textarea */}
                         <textarea ref={codeRef} value={code} onChange={e => handleCodeChange(e.target.value)}
                             spellCheck={false}
                             className="flex-1 p-3 text-xs font-mono resize-none outline-none leading-6"
-                            style={{
-                                background: 'transparent', color: '#e2e8f0', lineHeight: '1.5rem',
-                                border: 'none', caretColor: '#6366f1',
-                            }} />
+                            style={{ background: 'transparent', color: '#e2e8f0', lineHeight: '1.5rem', border: 'none', caretColor: '#6366f1' }} />
                     </div>
 
-                    {/* Bottom notice */}
                     <div className="px-4 py-2 text-xs text-center border-t shrink-0"
                         style={{ borderColor: 'var(--border)', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)' }}>
                         Right-click &amp; paste blocked · Code streamed to recruiter in real-time
                     </div>
                 </div>
             </div>
+
+            {/* ── FULLSCREEN ENFORCEMENT OVERLAY ────────────────────────────── */}
+            {showFsOverlay && !isFullscreen && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.97)', backdropFilter: 'blur(12px)' }}>
+                    <div className="text-center px-10 py-12 rounded-2xl max-w-md w-full mx-4"
+                        style={{ background: 'rgba(239,68,68,0.06)', border: '2px solid rgba(239,68,68,0.55)', boxShadow: '0 0 80px rgba(239,68,68,0.25)' }}>
+                        <div className="text-6xl mb-5">⛶</div>
+                        <h2 className="text-2xl font-black mb-3" style={{ color: '#f87171' }}>Fullscreen Required</h2>
+                        <p className="text-sm leading-relaxed mb-2" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                            You must remain in fullscreen mode during the interview. Exiting fullscreen has been flagged and reported to the recruiter.
+                        </p>
+                        <p className="text-xs mb-8" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                            This violation has been recorded in your session report.
+                        </p>
+                        <button
+                            onClick={enterFullscreen}
+                            className="w-full py-4 rounded-xl font-black text-base transition-all"
+                            style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', boxShadow: '0 4px 24px rgba(239,68,68,0.4)' }}>
+                            Return to Fullscreen →
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* ── TAB SWITCH PUNISHMENT OVERLAY ─────────────────────────────── */}
             {tabSwitchOverlay && (
