@@ -68,7 +68,9 @@ export default function CandidatePage() {
     const [warnings, setWarnings] = useState<string[]>([]);
     const [sessionEnded, setSessionEnded] = useState(false);
     const [elapsed, setElapsed] = useState(0);
-    // Fullscreen enforcement overlay (when user forces-exit fullscreen)
+    // Fullscreen gate: true once the candidate clicks "Start Interview"
+    const [sessionStarted, setSessionStarted] = useState(false);
+    // Fullscreen enforcement overlay (when user forces-exit fullscreen after starting)
     const [showFsOverlay, setShowFsOverlay] = useState(false);
 
     const codeRef = useRef<HTMLTextAreaElement>(null);
@@ -145,17 +147,15 @@ export default function CandidatePage() {
     }, [handleBehaviorEvent]);
 
     const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen({
-        enabled: !!sessionId && !sessionEnded,
+        enabled: !!sessionId && !sessionEnded && sessionStarted,
         onExit: handleFullscreenExit,
     });
 
-    // Auto-enter fullscreen when session is ready (requires a prior user gesture — the "Join" click)
-    useEffect(() => {
-        if (connected && meetingId && !sessionEnded) {
-            const t = setTimeout(() => enterFullscreen(), 800);
-            return () => clearTimeout(t);
-        }
-    }, [connected, meetingId, sessionEnded, enterFullscreen]);
+    // Handler called by the "Start Interview" gate button — user gesture required for fullscreen
+    const handleStartInterview = useCallback(async () => {
+        setSessionStarted(true);
+        await enterFullscreen();
+    }, [enterFullscreen]);
 
     // Dismiss overlay when fullscreen re-enters
     useEffect(() => {
@@ -181,40 +181,44 @@ export default function CandidatePage() {
         screenStream, isScreenSharing, startScreenShare, stopScreenShare,
     } = useVideoCall({ role: 'candidate', meetingId, sessionId, emit, on });
 
-    // Attach streams to video elements
+    // Attach streams to video elements — always call .play() so browsers that
+    // require explicit play (even with autoPlay attr) work correctly.
     useEffect(() => {
         if (localVideoRef.current && localStream) {
             localVideoRef.current.srcObject = localStream;
+            localVideoRef.current.play().catch(() => { });
         }
     }, [localStream]);
 
     useEffect(() => {
         if (remoteVideoRef.current && remoteStream) {
             remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play().catch(() => { });
         }
     }, [remoteStream]);
 
     useEffect(() => {
         if (screenVideoRef.current && screenStream) {
             screenVideoRef.current.srcObject = screenStream;
+            screenVideoRef.current.play().catch(() => { });
         }
     }, [screenStream]);
 
-    // Auto-start video call when connected
+    // Auto-start video call once connecting is allowed (sessionStarted = true)
     useEffect(() => {
-        if (connected && meetingId && callState === 'idle') {
-            const timer = setTimeout(() => startCall(), 1500);
+        if (connected && meetingId && callState === 'idle' && sessionStarted) {
+            const timer = setTimeout(() => startCall(), 500);
             return () => clearTimeout(timer);
         }
-    }, [connected, meetingId, callState, startCall]);
+    }, [connected, meetingId, callState, sessionStarted, startCall]);
 
     // Auto-start screen share once call is connected
     useEffect(() => {
-        if (callState === 'connected' && !isScreenSharing) {
-            const t = setTimeout(() => startScreenShare(), 2000);
+        if (callState === 'connected' && !isScreenSharing && sessionStarted) {
+            const t = setTimeout(() => startScreenShare(), 1500);
             return () => clearTimeout(t);
         }
-    }, [callState, isScreenSharing, startScreenShare]);
+    }, [callState, isScreenSharing, sessionStarted, startScreenShare]);
 
     // ── Face detection ─────────────────────────────────────────────────────────
     const handleFaceEvent = useCallback((eventType: 'face_not_detected' | 'multiple_faces_detected' | 'gaze_away') => {
@@ -521,8 +525,33 @@ export default function CandidatePage() {
                 </div>
             </div>
 
+            {/* ── START INTERVIEW GATE (user-gesture required for fullscreen) ─── */}
+            {!sessionStarted && !sessionEnded && (
+                <div className="fixed inset-0 z-[300] flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.97)', backdropFilter: 'blur(16px)' }}>
+                    <div className="text-center px-10 py-14 rounded-2xl max-w-md w-full mx-4"
+                        style={{ background: 'rgba(99,102,241,0.06)', border: '2px solid rgba(99,102,241,0.4)', boxShadow: '0 0 80px rgba(99,102,241,0.2)' }}>
+                        <div className="text-6xl mb-5">⛶</div>
+                        <h2 className="text-2xl font-black mb-3" style={{ color: 'var(--text-primary)' }}>Ready to Begin?</h2>
+                        <p className="text-sm leading-relaxed mb-2" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                            This interview requires you to remain in fullscreen mode. Your camera and screen will be shared with the recruiter.
+                        </p>
+                        <p className="text-xs mb-8" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                            Anti-cheat monitoring and face detection will activate automatically.
+                        </p>
+                        <button
+                            onClick={handleStartInterview}
+                            className="w-full py-4 rounded-xl font-black text-base transition-all"
+                            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', boxShadow: '0 4px 32px rgba(99,102,241,0.5)' }}>
+                            Start Interview →
+                        </button>
+                        <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,0.25)' }}>You are: <span style={{ color: '#a5b4fc' }}>{candidateName || 'Candidate'}</span></p>
+                    </div>
+                </div>
+            )}
+
             {/* ── FULLSCREEN ENFORCEMENT OVERLAY ────────────────────────────── */}
-            {showFsOverlay && !isFullscreen && (
+            {showFsOverlay && !isFullscreen && sessionStarted && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center"
                     style={{ background: 'rgba(0,0,0,0.97)', backdropFilter: 'blur(12px)' }}>
                     <div className="text-center px-10 py-12 rounded-2xl max-w-md w-full mx-4"

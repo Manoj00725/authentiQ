@@ -136,16 +136,23 @@ export default function RecruiterDashboard() {
     });
 
     useEffect(() => {
-        if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
+        if (localVideoRef.current && localStream) {
+            localVideoRef.current.srcObject = localStream;
+            localVideoRef.current.play().catch(() => { });
+        }
     }, [localStream]);
 
     useEffect(() => {
-        if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream;
+        if (remoteVideoRef.current && remoteStream) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play().catch(() => { });
+        }
     }, [remoteStream]);
 
     useEffect(() => {
         if (screenVideoRef.current && remoteScreenStream) {
             screenVideoRef.current.srcObject = remoteScreenStream;
+            screenVideoRef.current.play().catch(() => { });
             // Auto switch to screen tab when screen share starts
             setActiveTab('screen');
         }

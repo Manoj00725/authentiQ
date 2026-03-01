@@ -35,6 +35,20 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
     const screenPeerRef = useRef<any>(null);
     const screenStreamRef = useRef<MediaStream | null>(null);
 
+    // Keep refs to the latest values so socket callbacks never close over stale values
+    const sessionIdRef = useRef(sessionId);
+    useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+
+    const meetingIdRef = useRef(meetingId);
+    useEffect(() => { meetingIdRef.current = meetingId; }, [meetingId]);
+
+    // Keep stable refs to emit, on so socket listener effects don't depend on them
+    const emitRef = useRef(emit);
+    useEffect(() => { emitRef.current = emit; }, [emit]);
+
+    const onRef = useRef(on);
+    useEffect(() => { onRef.current = on; }, [on]);
+
     // Get local media stream
     const getLocalStream = useCallback(async () => {
         try {
@@ -60,8 +74,13 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         }
     }, []);
 
-    // Create a peer connection
-    const createPeer = useCallback((initiator: boolean, stream: MediaStream) => {
+    /**
+     * Create a webcam peer connection.
+     * @param initiator  true = recruiter (makes offer), false = candidate (answers)
+     * @param stream     local media stream
+     * @param overrideSessionId  when recruiter makes an offer, pass the candidate's real session_id
+     */
+    const createPeer = useCallback((initiator: boolean, stream: MediaStream, overrideSessionId?: string) => {
         if (!SimplePeer) return null;
         const peer = new SimplePeer({
             initiator,
@@ -76,34 +95,39 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         });
 
         peer.on('signal', (signal: WebRTCSignal) => {
+            const sid = overrideSessionId ?? sessionIdRef.current;
+            const mid = meetingIdRef.current;
+
             if ((signal as any).type === 'offer' || (signal as any).type === 'answer' || (signal as any).sdp) {
                 if (initiator) {
-                    emit('webrtc_offer', { session_id: sessionId, signal });
+                    // Recruiter → Candidate: send offer addressed to the real session_id
+                    emitRef.current('webrtc_offer', { session_id: sid, signal });
                 } else {
-                    emit('webrtc_answer', { meeting_id: meetingId, signal });
+                    // Candidate → Recruiter: send answer addressed to the meeting_id
+                    emitRef.current('webrtc_answer', { meeting_id: mid, signal });
                 }
             } else {
                 // ICE candidate trickle
                 if (initiator) {
-                    emit('webrtc_ice_candidate', {
+                    emitRef.current('webrtc_ice_candidate', {
                         target: 'candidate',
-                        session_id: sessionId,
-                        meeting_id: meetingId,
+                        session_id: sid,
+                        meeting_id: mid,
                         candidate: signal,
                     });
                 } else {
-                    emit('webrtc_ice_candidate', {
+                    emitRef.current('webrtc_ice_candidate', {
                         target: 'recruiter',
-                        session_id: sessionId,
-                        meeting_id: meetingId,
+                        session_id: sid,
+                        meeting_id: mid,
                         candidate: signal,
                     });
                 }
             }
         });
 
-        peer.on('stream', (remoteStream: MediaStream) => {
-            setRemoteStream(remoteStream);
+        peer.on('stream', (remoteStr: MediaStream) => {
+            setRemoteStream(remoteStr);
             setCallState('connected');
         });
 
@@ -121,14 +145,20 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         });
 
         return peer;
-    }, [sessionId, meetingId, emit]);
+    }, []); // no deps — uses refs for emit/sessionId/meetingId
 
     // ── Screen share peer ──────────────────────────────────────────────────
-    const createScreenPeer = useCallback((initiator: boolean, stream: MediaStream) => {
+    /**
+     * Create a screen-share peer.
+     * @param initiator  true = candidate (sends screen), false = recruiter (receives)
+     * @param stream     only pass a real stream when initiator=true (candidate's display stream)
+     * @param overrideSessionId  candidate's real session_id (used for routing)
+     */
+    const createScreenPeer = useCallback((initiator: boolean, stream: MediaStream | null, overrideSessionId?: string) => {
         if (!SimplePeer) return null;
-        const peer = new SimplePeer({
+
+        const peerOptions: any = {
             initiator,
-            stream,
             trickle: true,
             config: {
                 iceServers: [
@@ -136,29 +166,41 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
                     { urls: 'stun:stun1.l.google.com:19302' },
                 ],
             },
-        });
+        };
+
+        // Only attach a stream when we are the sender (candidate)
+        if (initiator && stream) {
+            peerOptions.stream = stream;
+        }
+
+        const peer = new SimplePeer(peerOptions);
 
         peer.on('signal', (signal: any) => {
+            // Use the explicitly provided override; never fall through to our own session id
+            // when we are the recruiter (non-initiator) answering back to the candidate.
+            const sid = overrideSessionId ?? sessionIdRef.current;
+            const mid = meetingIdRef.current;
+
             if (signal.type === 'offer' || signal.type === 'answer' || signal.sdp) {
                 if (initiator) {
-                    // Candidate → Recruiter
-                    emit('screen_share_offer', { meeting_id: meetingId, session_id: sessionId, signal });
+                    // Candidate → Recruiter: screen share offer
+                    emitRef.current('screen_share_offer', { meeting_id: mid, session_id: sid, signal });
                 } else {
-                    // Recruiter → Candidate
-                    emit('screen_share_answer', { session_id: sessionId, signal });
+                    // Recruiter → Candidate: screen share answer — route to candidate's session
+                    emitRef.current('screen_share_answer', { session_id: sid, signal });
                 }
             } else {
                 // ICE
                 if (initiator) {
-                    emit('screen_share_ice', { target: 'recruiter', meeting_id: meetingId, session_id: sessionId, candidate: signal });
+                    emitRef.current('screen_share_ice', { target: 'recruiter', meeting_id: mid, session_id: sid, candidate: signal });
                 } else {
-                    emit('screen_share_ice', { target: 'candidate', meeting_id: meetingId, session_id: sessionId, candidate: signal });
+                    emitRef.current('screen_share_ice', { target: 'candidate', meeting_id: mid, session_id: sid, candidate: signal });
                 }
             }
         });
 
-        peer.on('stream', (stream: MediaStream) => {
-            setRemoteScreenStream(stream);
+        peer.on('stream', (rcvdStream: MediaStream) => {
+            setRemoteScreenStream(rcvdStream);
         });
 
         peer.on('error', (err: Error) => {
@@ -170,7 +212,7 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         });
 
         return peer;
-    }, [meetingId, sessionId, emit]);
+    }, []); // no deps — uses refs for emit/sessionId/meetingId
 
     /** Candidate: request screen capture and start sharing */
     const startScreenShare = useCallback(async () => {
@@ -184,6 +226,7 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
             setScreenStream(stream);
             setIsScreenSharing(true);
 
+            // initiator=true, pass the real display stream
             const peer = createScreenPeer(true, stream);
             if (peer) screenPeerRef.current = peer;
 
@@ -207,8 +250,8 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
             setScreenStream(null);
         }
         setIsScreenSharing(false);
-        emit('screen_share_stopped', { meeting_id: meetingId });
-    }, [emit, meetingId]);
+        emitRef.current('screen_share_stopped', { meeting_id: meetingIdRef.current });
+    }, []);
 
     // Candidate: start camera → signal readiness
     const startAsCandidate = useCallback(async () => {
@@ -217,8 +260,8 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         if (!stream) return;
 
         setCallState('waiting');
-        emit('call_ready', { meeting_id: meetingId, session_id: sessionId });
-    }, [loadSimplePeer, getLocalStream, emit, meetingId, sessionId]);
+        emitRef.current('call_ready', { meeting_id: meetingIdRef.current, session_id: sessionIdRef.current });
+    }, [loadSimplePeer, getLocalStream]);
 
     // Recruiter: start camera → wait for peer_call_ready, then make offer
     const startAsRecruiter = useCallback(async () => {
@@ -282,55 +325,64 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
         }
     }, [isCameraOff]);
 
-    // Set up socket listeners
+    // ── Socket listeners ─────────────────────────────────────────────────
+    // IMPORTANT: This effect uses stable refs for createPeer/createScreenPeer/loadSimplePeer
+    // so it only runs once on mount (no re-registration races that drop signals).
     useEffect(() => {
         const unsubs: (() => void)[] = [];
 
         if (role === 'recruiter') {
             // Candidate signals readiness → create webcam offer
-            unsubs.push(on('peer_call_ready', async ({ session_id }: { session_id: string }) => {
+            unsubs.push(onRef.current('peer_call_ready', async ({ session_id: candidateSessionId }: { session_id: string }) => {
                 await loadSimplePeer();
                 const stream = localStreamRef.current;
                 if (!stream) return;
                 setCallState('connecting');
-                const peer = createPeer(true, stream);
+                // Pass candidateSessionId directly so the offer is routed to the right room
+                const peer = createPeer(true, stream, candidateSessionId);
                 if (peer) peerRef.current = peer;
             }));
 
             // Receive SDP answer from candidate
-            unsubs.push(on('webrtc_answer', ({ signal }: { signal: WebRTCSignal }) => {
+            unsubs.push(onRef.current('webrtc_answer', ({ signal }: { signal: WebRTCSignal }) => {
                 if (peerRef.current) peerRef.current.signal(signal);
             }));
 
             // Receive ICE from candidate
-            unsubs.push(on('webrtc_ice_candidate', ({ candidate }: any) => {
+            unsubs.push(onRef.current('webrtc_ice_candidate', ({ candidate }: any) => {
                 if (peerRef.current) peerRef.current.signal({ candidate });
             }));
 
             // ── Screen share: recruiter receives offer from candidate ────────
-            unsubs.push(on('screen_share_offer', async ({ signal }: any) => {
+            unsubs.push(onRef.current('screen_share_offer', async ({ signal, session_id: candidateSessionId }: any) => {
                 await loadSimplePeer();
-                // We need a dummy stream (audio-only) to answer — or just pass an empty stream
-                // Actually simple-peer can answer without a stream if we give it initiator: false
-                const peer = createScreenPeer(false, new MediaStream());
+                // Destroy any existing screen peer before creating a new one
+                if (screenPeerRef.current) {
+                    screenPeerRef.current.destroy();
+                    screenPeerRef.current = null;
+                }
+                // Recruiter is NOT the initiator — pass candidateSessionId so the
+                // answer is routed back to candidate:{candidateSessionId}
+                const peer = createScreenPeer(false, null, candidateSessionId);
                 if (peer) {
                     screenPeerRef.current = peer;
+                    // Signal AFTER storing ref so answer routing has the sessionId
                     peer.signal(signal);
                 }
             }));
 
-            unsubs.push(on('screen_share_ice', ({ candidate }: any) => {
+            unsubs.push(onRef.current('screen_share_ice', ({ candidate }: any) => {
                 if (screenPeerRef.current) screenPeerRef.current.signal({ candidate });
             }));
 
-            unsubs.push(on('screen_share_stopped', () => {
+            unsubs.push(onRef.current('screen_share_stopped', () => {
                 setRemoteScreenStream(null);
             }));
         }
 
         if (role === 'candidate') {
             // Receive SDP offer from recruiter (webcam)
-            unsubs.push(on('webrtc_offer', async ({ signal }: { signal: WebRTCSignal }) => {
+            unsubs.push(onRef.current('webrtc_offer', async ({ signal }: { signal: WebRTCSignal }) => {
                 await loadSimplePeer();
                 const stream = localStreamRef.current;
                 if (!stream) return;
@@ -343,22 +395,23 @@ export function useVideoCall({ role, meetingId, sessionId, emit, on }: UseVideoC
             }));
 
             // ICE from recruiter (webcam)
-            unsubs.push(on('webrtc_ice_candidate', ({ candidate }: any) => {
+            unsubs.push(onRef.current('webrtc_ice_candidate', ({ candidate }: any) => {
                 if (peerRef.current) peerRef.current.signal({ candidate });
             }));
 
             // Screen share ICE from recruiter
-            unsubs.push(on('screen_share_answer', ({ signal }: any) => {
+            unsubs.push(onRef.current('screen_share_answer', ({ signal }: any) => {
                 if (screenPeerRef.current) screenPeerRef.current.signal(signal);
             }));
 
-            unsubs.push(on('screen_share_ice', ({ candidate }: any) => {
+            unsubs.push(onRef.current('screen_share_ice', ({ candidate }: any) => {
                 if (screenPeerRef.current) screenPeerRef.current.signal({ candidate });
             }));
         }
 
         return () => unsubs.forEach(fn => fn());
-    }, [role, on, createPeer, createScreenPeer, loadSimplePeer]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [role]); // Only re-run if role changes; all other deps are accessed via stable refs
 
     // Cleanup on unmount
     useEffect(() => {
