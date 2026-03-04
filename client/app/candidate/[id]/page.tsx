@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useMonitoring } from '@/hooks/useMonitoring';
 import { useVideoCall } from '@/hooks/useVideoCall';
@@ -57,6 +57,7 @@ export default function CandidatePage() {
     const params = useParams();
     const sessionId = params?.id as string;
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { connected, emit, on } = useWebSocket();
 
     const [meetingId, setMeetingId] = useState('');
@@ -81,11 +82,15 @@ export default function CandidatePage() {
 
     // ── WebSocket lifecycle ────────────────────────────────────────────────────
     useEffect(() => {
-        const stored = sessionStorage.getItem('candidate_name') || 'Candidate';
-        const mid = sessionStorage.getItem('meeting_id') || '';
-        setCandidateName(stored);
-        setMeetingId(mid);
-    }, []);
+        // Read from sessionStorage first, then fall back to URL query params
+        const storedName = sessionStorage.getItem('candidate_name') || 'Candidate';
+        const storedMid = sessionStorage.getItem('meeting_id') || searchParams.get('meeting_id') || '';
+        setCandidateName(storedName);
+        setMeetingId(storedMid);
+        // Persist back so future reads always find it
+        if (storedMid) sessionStorage.setItem('meeting_id', storedMid);
+        if (storedName !== 'Candidate') sessionStorage.setItem('candidate_name', storedName);
+    }, [searchParams]);
 
     useEffect(() => {
         if (!connected || !meetingId) return;

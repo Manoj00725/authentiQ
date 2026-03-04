@@ -32,6 +32,9 @@ export default function JoinPage() {
                 throw new Error(data.error || 'Failed to join meeting');
             }
             const data = await res.json();
+            // Store in sessionStorage so the candidate page can read them
+            sessionStorage.setItem('meeting_id', meetingId.trim());
+            sessionStorage.setItem('candidate_name', candidateName.trim());
             router.push(`/candidate/${data.session.id}?meeting_id=${meetingId.trim()}`);
         } catch (err: any) {
             setError(err.message || 'Failed to join meeting. Check the meeting ID.');
