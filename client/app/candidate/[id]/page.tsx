@@ -8,7 +8,7 @@ import { useVideoCall } from '@/hooks/useVideoCall';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
 import { useTabLock } from '@/hooks/useTabLock';
 import { useFullscreen } from '@/hooks/useFullscreen';
-import type { BehaviorEvent, Severity, CodingChallenge, CodingLanguage } from '@/types';
+import type { BehaviorEvent, Severity, CodingChallenge, CodingLanguage, FaceStatusUpdate } from '@/types';
 
 const DEFAULT_CHALLENGES: CodingChallenge[] = [
     {
@@ -80,6 +80,20 @@ export default function CandidatePage() {
     const screenVideoRef = useRef<HTMLVideoElement>(null);
     const streamDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+    // Reference face descriptor for identity verification
+    const [referenceDescriptor, setReferenceDescriptor] = useState<Float32Array | null>(null);
+
+    // Load reference descriptor from sessionStorage on mount
+    useEffect(() => {
+        const stored = sessionStorage.getItem('face_reference_descriptor');
+        if (stored) {
+            try {
+                const arr = JSON.parse(stored) as number[];
+                setReferenceDescriptor(new Float32Array(arr));
+            } catch { /* ignore */ }
+        }
+    }, []);
+
     // ── WebSocket lifecycle ────────────────────────────────────────────────────
     useEffect(() => {
         // Read from sessionStorage first, then fall back to URL query params
@@ -120,6 +134,8 @@ export default function CandidatePage() {
             ai_pattern_detected: '🚨 AI-pattern detected', rapid_solution: '⚠️ Rapid solution flagged',
             face_not_detected: '📷 Face not visible — stay in camera view', multiple_faces_detected: '👥 Multiple faces detected!',
             gaze_away: '👀 Please focus on the screen',
+            suspicious_emotion: '🎭 Unusual emotional pattern detected',
+            face_mismatch: '🚨 Identity verification failed!',
         };
         const label = labels[event.event_type];
         if (label) setWarnings(prev => [...prev.slice(-3), label]);
@@ -226,18 +242,40 @@ export default function CandidatePage() {
     }, [callState, isScreenSharing, sessionStarted, startScreenShare]);
 
     // ── Face detection ─────────────────────────────────────────────────────────
-    const handleFaceEvent = useCallback((eventType: 'face_not_detected' | 'multiple_faces_detected' | 'gaze_away') => {
+    const handleFaceEvent = useCallback((eventType: 'face_not_detected' | 'multiple_faces_detected' | 'gaze_away' | 'suspicious_emotion' | 'face_mismatch', metadata?: Record<string, unknown>) => {
         const severityMap: Record<string, Severity> = {
-            face_not_detected: 'high', multiple_faces_detected: 'critical', gaze_away: 'medium',
+            face_not_detected: 'high',
+            multiple_faces_detected: 'critical',
+            gaze_away: 'medium',
+            suspicious_emotion: 'medium',
+            face_mismatch: 'critical',
         };
-        handleBehaviorEvent({ event_type: eventType, timestamp: new Date().toISOString(), severity: severityMap[eventType] });
+        handleBehaviorEvent({
+            event_type: eventType,
+            timestamp: new Date().toISOString(),
+            severity: severityMap[eventType],
+            metadata,
+        });
     }, [handleBehaviorEvent]);
 
-    const { faceStatus } = useFaceDetection({
+    const { faceStatus, currentEmotion, identityMatch, identityDistance, faceHistory } = useFaceDetection({
         videoRef: localVideoRef,
         enabled: !!localStream,
         onFaceEvent: handleFaceEvent,
+        referenceDescriptor,
     });
+
+    // Emit face status updates to the recruiter every 5 seconds
+    useEffect(() => {
+        if (!connected || !sessionId || !faceHistory.length) return;
+        const iv = setInterval(() => {
+            const latest = faceHistory[faceHistory.length - 1];
+            if (latest) {
+                emit('face_status_update', { session_id: sessionId, update: latest });
+            }
+        }, 5000);
+        return () => clearInterval(iv);
+    }, [connected, sessionId, faceHistory, emit]);
 
     const faceCfg = FACE_STATUS_CONFIG[faceStatus];
 
@@ -307,6 +345,24 @@ export default function CandidatePage() {
                         <span className="text-xs px-2 py-0.5 rounded-full font-semibold animate-pulse"
                             style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#a5b4fc' }}>
                             🖥️ Screen sharing
+                        </span>
+                    )}
+                    {/* Emotion badge */}
+                    {currentEmotion && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                            style={{ background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                            {currentEmotion.dominant === 'neutral' ? '😐' : currentEmotion.dominant === 'happy' ? '😊' : currentEmotion.dominant === 'sad' ? '😢' : currentEmotion.dominant === 'angry' ? '😠' : currentEmotion.dominant === 'fearful' ? '😨' : currentEmotion.dominant === 'surprised' ? '😲' : '🤢'} {currentEmotion.dominant} {currentEmotion.confidence}%
+                        </span>
+                    )}
+                    {/* Identity match badge */}
+                    {identityMatch && (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                            style={{
+                                background: identityMatch === 'verified' ? 'rgba(16,185,129,0.12)' : identityMatch === 'warning' ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)',
+                                border: `1px solid ${identityMatch === 'verified' ? 'rgba(16,185,129,0.3)' : identityMatch === 'warning' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)'}`,
+                                color: identityMatch === 'verified' ? '#10b981' : identityMatch === 'warning' ? '#f59e0b' : '#ef4444',
+                            }}>
+                            {identityMatch === 'verified' ? '🔒 ID Verified' : identityMatch === 'warning' ? '⚠️ ID Warning' : '🚨 ID Mismatch!'}
                         </span>
                     )}
                 </div>

@@ -31,6 +31,9 @@ const EVENT_WEIGHTS: Record<string, EventWeight> = {
     face_not_detected: { weight: 20, description: 'Candidate face not visible in camera' },
     multiple_faces_detected: { weight: 45, description: 'Multiple faces detected — possible external assistance' },
     gaze_away: { weight: 12, description: 'Candidate repeatedly looking away from screen' },
+    // Enhanced AI face detection
+    suspicious_emotion: { weight: 15, description: 'Abnormal emotional pattern detected (flat affect, stress spike, or erratic shifts)' },
+    face_mismatch: { weight: 50, description: 'Different person detected — face does not match reference photo' },
 };
 
 // Bonus penalty for repeated blur events (pattern detection)
@@ -42,7 +45,7 @@ const REPEAT_CHEAT_THRESHOLD = 2;
 const REPEAT_CHEAT_MULTIPLIER = 1.5;
 const CRITICAL_CHEAT_EVENTS = new Set([
     'code_paste', 'devtools_open', 'ai_pattern_detected',
-    'multiple_faces_detected', 'face_not_detected',
+    'multiple_faces_detected', 'face_not_detected', 'face_mismatch',
 ]);
 
 export class AuthenticityEngine {

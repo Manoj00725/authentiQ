@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useVideoCall } from '@/hooks/useVideoCall';
-import type { EventLog, ScoreUpdate, CheatAlert, CodeUpdate, CodingChallenge, CodingLanguage } from '@/types';
+import type { EventLog, ScoreUpdate, CheatAlert, CodeUpdate, CodingChallenge, CodingLanguage, FaceStatusUpdate, FaceEmotionData } from '@/types';
 import {
     AreaChart, Area, LineChart, Line, BarChart, Bar,
     XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
@@ -20,6 +20,7 @@ const EVENT_ICONS: Record<string, string> = {
     code_paste: '📋', devtools_open: '🔧', right_click_attempt: '🖱️',
     keyboard_shortcut_cheat: '⌨️', ai_pattern_detected: '🤖', rapid_solution: '⚡',
     face_not_detected: '📷', multiple_faces_detected: '👥', gaze_away: '👀',
+    suspicious_emotion: '🎭', face_mismatch: '🚨',
 };
 const CHEAT_LABELS: Record<string, string> = {
     code_paste: 'CODE PASTE', devtools_open: 'DEVTOOLS', right_click_attempt: 'RIGHT CLICK',
@@ -27,6 +28,7 @@ const CHEAT_LABELS: Record<string, string> = {
     rapid_solution: 'RAPID SOLUTION', tab_switch: 'TAB SWITCH', paste_attempt: 'TEXT PASTE',
     fullscreen_exit: 'FULLSCREEN EXIT', word_burst: 'WORD BURST', window_blur: 'WINDOW UNFOCUS',
     face_not_detected: 'FACE MISSING', multiple_faces_detected: 'MULTIPLE FACES', gaze_away: 'LOOKING AWAY',
+    suspicious_emotion: 'EMOTION ALERT', face_mismatch: 'ID MISMATCH',
 };
 const LANGUAGE_LABELS: Record<string, string> = { javascript: 'JS', python: 'PY', java: 'JV', cpp: 'C++', typescript: 'TS' };
 
@@ -116,11 +118,15 @@ export default function RecruiterDashboard() {
     const [typingData, setTypingData] = useState<{ t: string; wpm: number }[]>([]);
     const [sessionEnded, setSessionEnded] = useState(false);
     const [elapsed, setElapsed] = useState(0);
-    const [activeTab, setActiveTab] = useState<'video' | 'code' | 'charts' | 'screen'>('video');
+    const [activeTab, setActiveTab] = useState<'video' | 'code' | 'charts' | 'screen' | 'ai'>('video');
     const [showPushModal, setShowPushModal] = useState(false);
     const [candidateSessionId, setCandidateSessionId] = useState('');
     const [expandedAlertId, setExpandedAlertId] = useState<string | null>(null);
     const alertRef = useRef<HTMLDivElement>(null);
+
+    // Face detection state from candidate
+    const [latestFaceStatus, setLatestFaceStatus] = useState<FaceStatusUpdate | null>(null);
+    const [faceTimeline, setFaceTimeline] = useState<{ t: string; status: string; emotion: string; idMatch: string }[]>([]);
 
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -191,7 +197,21 @@ export default function RecruiterDashboard() {
             if (alertRef.current) alertRef.current.scrollTop = 0;
         });
         const u6 = on('code_update', (upd: CodeUpdate) => setLiveCode(upd));
-        return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+        const u7 = on('face_status_update', (update: FaceStatusUpdate) => {
+            setLatestFaceStatus(update);
+            setFaceTimeline(prev => {
+                const time = new Date(update.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const entry = {
+                    t: time,
+                    status: update.status,
+                    emotion: update.emotion?.dominant || 'none',
+                    idMatch: update.identityMatch || 'none',
+                };
+                const next = [...prev, entry];
+                return next.length > 60 ? next.slice(-60) : next;
+            });
+        });
+        return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
     }, [on, elapsed]);
 
     // Timer
@@ -218,6 +238,7 @@ export default function RecruiterDashboard() {
         { id: 'screen' as const, label: '🖥️ Screen Share', badge: remoteScreenStream ? 'LIVE' : undefined },
         { id: 'code' as const, label: '💻 Live Code', badge: liveCode ? '●' : undefined },
         { id: 'charts' as const, label: '📊 Analytics' },
+        { id: 'ai' as const, label: '🧠 AI Face', badge: latestFaceStatus ? '●' : undefined },
     ];
 
     return (
@@ -385,10 +406,31 @@ export default function RecruiterDashboard() {
                                             {candidateStatus.candidate_name || 'Candidate'}
                                         </div>
                                         {/* Latest video cheat alert overlay */}
-                                        {cheatAlerts[0] && ['face_not_detected', 'multiple_faces_detected', 'gaze_away'].includes(cheatAlerts[0].event_type) && (
+                                        {cheatAlerts[0] && ['face_not_detected', 'multiple_faces_detected', 'gaze_away', 'suspicious_emotion', 'face_mismatch'].includes(cheatAlerts[0].event_type) && (
                                             <div className="text-xs font-bold px-2 py-1 rounded-lg animate-pulse"
                                                 style={{ background: `${SEVERITY_COLORS[cheatAlerts[0].severity]}25`, border: `1px solid ${SEVERITY_COLORS[cheatAlerts[0].severity]}60`, color: SEVERITY_COLORS[cheatAlerts[0].severity] }}>
-                                                {cheatAlerts[0].event_type === 'face_not_detected' ? '📷 Face missing' : cheatAlerts[0].event_type === 'multiple_faces_detected' ? '👥 Multiple faces!' : '👀 Not focused'}
+                                                {cheatAlerts[0].event_type === 'face_not_detected' ? '📷 Face missing' : cheatAlerts[0].event_type === 'multiple_faces_detected' ? '👥 Multiple faces!' : cheatAlerts[0].event_type === 'gaze_away' ? '👀 Not focused' : cheatAlerts[0].event_type === 'suspicious_emotion' ? '🎭 Emotion Alert' : '🚨 ID Mismatch!'}
+                                            </div>
+                                        )}
+                                        {/* Face status indicator overlay */}
+                                        {latestFaceStatus && (
+                                            <div className="flex items-center gap-1.5">
+                                                {latestFaceStatus.emotion && (
+                                                    <div className="text-xs font-semibold px-2 py-1 rounded-lg"
+                                                        style={{ background: 'rgba(139,92,246,0.3)', border: '1px solid rgba(139,92,246,0.5)', color: '#ddd6fe' }}>
+                                                        {latestFaceStatus.emotion.dominant === 'neutral' ? '😐' : latestFaceStatus.emotion.dominant === 'happy' ? '😊' : latestFaceStatus.emotion.dominant === 'sad' ? '😢' : latestFaceStatus.emotion.dominant === 'angry' ? '😠' : latestFaceStatus.emotion.dominant === 'fearful' ? '😨' : latestFaceStatus.emotion.dominant === 'surprised' ? '😲' : '🤢'} {latestFaceStatus.emotion.dominant} {latestFaceStatus.emotion.confidence}%
+                                                    </div>
+                                                )}
+                                                {latestFaceStatus.identityMatch && (
+                                                    <div className="text-xs font-semibold px-2 py-1 rounded-lg"
+                                                        style={{
+                                                            background: latestFaceStatus.identityMatch === 'verified' ? 'rgba(16,185,129,0.3)' : latestFaceStatus.identityMatch === 'warning' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)',
+                                                            border: `1px solid ${latestFaceStatus.identityMatch === 'verified' ? 'rgba(16,185,129,0.5)' : latestFaceStatus.identityMatch === 'warning' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)'}`,
+                                                            color: latestFaceStatus.identityMatch === 'verified' ? '#6ee7b7' : latestFaceStatus.identityMatch === 'warning' ? '#fcd34d' : '#fca5a5',
+                                                        }}>
+                                                        {latestFaceStatus.identityMatch === 'verified' ? '🔒 ID✓' : latestFaceStatus.identityMatch === 'warning' ? '⚠️ ID?' : '🚨 ID✗'}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -575,6 +617,129 @@ export default function RecruiterDashboard() {
                                 )}
                             </div>
                         </>
+                    )}
+
+                    {/* ── AI FACE ANALYTICS TAB ──────────────────────────────────────── */}
+                    {activeTab === 'ai' && (
+                        <div className="glass-card p-5 flex flex-col gap-5">
+                            <div className="flex items-center justify-between">
+                                <p className="label mb-0">🧠 AI Face Detection Analytics</p>
+                                {latestFaceStatus && (
+                                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        Last update: {new Date(latestFaceStatus.timestamp).toLocaleTimeString()}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Current status cards */}
+                            <div className="grid grid-cols-3 gap-3">
+                                {/* Face status */}
+                                <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Face Status</p>
+                                    <p className="text-lg font-bold" style={{
+                                        color: latestFaceStatus?.status === 'face_detected' ? '#10b981' : latestFaceStatus?.status === 'gaze_away' ? '#f59e0b' : '#ef4444',
+                                    }}>
+                                        {latestFaceStatus?.status === 'face_detected' ? '✅ Detected' : latestFaceStatus?.status === 'no_face' ? '❌ Missing' : latestFaceStatus?.status === 'multiple_faces' ? '👥 Multiple' : latestFaceStatus?.status === 'gaze_away' ? '👀 Away' : '─ None'}
+                                    </p>
+                                    <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                                        {latestFaceStatus?.faceCount ?? 0} face{(latestFaceStatus?.faceCount ?? 0) !== 1 ? 's' : ''} in frame
+                                    </p>
+                                </div>
+
+                                {/* Emotion */}
+                                <div className="rounded-xl p-4" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                    <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Current Emotion</p>
+                                    <p className="text-lg font-bold" style={{ color: '#c4b5fd' }}>
+                                        {latestFaceStatus?.emotion ? (
+                                            <>{latestFaceStatus.emotion.dominant === 'neutral' ? '😐' : latestFaceStatus.emotion.dominant === 'happy' ? '😊' : latestFaceStatus.emotion.dominant === 'sad' ? '😢' : latestFaceStatus.emotion.dominant === 'angry' ? '😠' : latestFaceStatus.emotion.dominant === 'fearful' ? '😨' : latestFaceStatus.emotion.dominant === 'surprised' ? '😲' : '🤢'} {latestFaceStatus.emotion.dominant}</>
+                                        ) : '─ None'}
+                                    </p>
+                                    {latestFaceStatus?.emotion && (
+                                        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Confidence: {latestFaceStatus.emotion.confidence}%</p>
+                                    )}
+                                </div>
+
+                                {/* Identity */}
+                                <div className="rounded-xl p-4" style={{
+                                    background: latestFaceStatus?.identityMatch === 'mismatch' ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.06)',
+                                    border: `1px solid ${latestFaceStatus?.identityMatch === 'mismatch' ? 'rgba(239,68,68,0.3)' : latestFaceStatus?.identityMatch === 'warning' ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.2)'}`,
+                                }}>
+                                    <p className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Identity Match</p>
+                                    <p className="text-lg font-bold" style={{
+                                        color: latestFaceStatus?.identityMatch === 'verified' ? '#10b981' : latestFaceStatus?.identityMatch === 'warning' ? '#f59e0b' : latestFaceStatus?.identityMatch === 'mismatch' ? '#ef4444' : '#64748b',
+                                    }}>
+                                        {latestFaceStatus?.identityMatch === 'verified' ? '🔒 Verified' : latestFaceStatus?.identityMatch === 'warning' ? '⚠️ Warning' : latestFaceStatus?.identityMatch === 'mismatch' ? '🚨 MISMATCH' : '─ None'}
+                                    </p>
+                                    {latestFaceStatus?.identityDistance != null && (
+                                        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                                            Distance: {latestFaceStatus.identityDistance.toFixed(3)}
+                                            {latestFaceStatus.identityDistance > 0.6 ? ' (threshold exceeded!)' : latestFaceStatus.identityDistance > 0.4 ? ' (approaching limit)' : ' (good)'}
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Emotion breakdown bar */}
+                            {latestFaceStatus?.emotion?.all && (
+                                <div className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                    <p className="label mb-3">Emotion Breakdown</p>
+                                    <div className="space-y-2">
+                                        {(['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised'] as const).map(emotion => {
+                                            const val = latestFaceStatus.emotion?.all?.[emotion] ?? 0;
+                                            const pct = Math.round(val * 100);
+                                            const colors: Record<string, string> = {
+                                                neutral: '#94a3b8', happy: '#10b981', sad: '#3b82f6',
+                                                angry: '#ef4444', fearful: '#f59e0b', disgusted: '#8b5cf6', surprised: '#06b6d4',
+                                            };
+                                            return (
+                                                <div key={emotion} className="flex items-center gap-2">
+                                                    <span className="text-xs w-20 text-right shrink-0" style={{ color: 'var(--text-muted)' }}>{emotion}</span>
+                                                    <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                                                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: colors[emotion], opacity: 0.8 }} />
+                                                    </div>
+                                                    <span className="text-xs font-mono w-10 shrink-0" style={{ color: colors[emotion] }}>{pct}%</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Face status timeline */}
+                            {faceTimeline.length > 0 && (
+                                <div>
+                                    <p className="label mb-2">Face Status Timeline</p>
+                                    <div className="flex gap-1 flex-wrap">
+                                        {faceTimeline.map((entry, i) => {
+                                            const dotColor = entry.status === 'face_detected' ? '#10b981' : entry.status === 'gaze_away' ? '#f59e0b' : entry.status === 'no_face' ? '#ef4444' : '#6366f1';
+                                            return (
+                                                <div key={i} className="relative group">
+                                                    <div className="w-3 h-3 rounded-sm transition-all cursor-pointer"
+                                                        style={{ background: dotColor, opacity: 0.7 }}
+                                                        title={`${entry.t} — ${entry.status} | ${entry.emotion} | ID: ${entry.idMatch}`} />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="flex items-center gap-4 mt-2">
+                                        {[{ color: '#10b981', label: 'Detected' }, { color: '#f59e0b', label: 'Gaze Away' }, { color: '#ef4444', label: 'No Face' }, { color: '#6366f1', label: 'Multiple' }].map(l => (
+                                            <div key={l.label} className="flex items-center gap-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                                <div className="w-2 h-2 rounded-sm" style={{ background: l.color }} />
+                                                {l.label}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {!latestFaceStatus && (
+                                <div className="text-center py-12" style={{ color: 'var(--text-muted)' }}>
+                                    <p className="text-4xl mb-3">🧠</p>
+                                    <p className="text-sm">Waiting for AI face detection data...</p>
+                                    <p className="text-xs mt-1">Data will appear once the candidate starts their camera.</p>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </main>
 

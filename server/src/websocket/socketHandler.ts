@@ -20,6 +20,9 @@ const CHEAT_EVENT_MESSAGES: Record<string, string> = {
     face_not_detected: '📷 Face not visible — candidate may have stepped away from camera',
     multiple_faces_detected: '👥 Multiple faces detected — someone may be assisting the candidate',
     gaze_away: '👀 Candidate looking away from screen repeatedly',
+    // Enhanced AI face detection
+    suspicious_emotion: '🎭 Suspicious emotional pattern — abnormal expression detected by AI',
+    face_mismatch: '🚨 IDENTITY ALERT — Face does not match reference photo! Possible candidate swap',
 };
 
 export function setupSocketHandlers(
@@ -214,6 +217,18 @@ export function setupSocketHandlers(
         socket.on('screen_share_stopped', ({ meeting_id }) => {
             console.log(`🖥️  Screen share stopped for meeting: ${meeting_id}`);
             io.to(`recruiter:${meeting_id}`).emit('screen_share_stopped', {});
+        });
+        // ──────────────────────────────────────────────────────────────────────
+
+        // ─── Enhanced Face Detection: relay face status to recruiter ───────────
+        socket.on('face_status_update', async ({ session_id, update }) => {
+            try {
+                const session = await meetingService.getSessionById(session_id);
+                if (!session) return;
+                io.to(`recruiter:${session.meeting_id}`).emit('face_status_update', update);
+            } catch (error) {
+                console.error('face_status_update error:', error);
+            }
         });
         // ──────────────────────────────────────────────────────────────────────
 

@@ -26,7 +26,10 @@ export type EventType =
     // Video call anti-cheat
     | 'face_not_detected'
     | 'multiple_faces_detected'
-    | 'gaze_away';
+    | 'gaze_away'
+    // Enhanced AI face detection
+    | 'suspicious_emotion'
+    | 'face_mismatch';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
@@ -80,6 +83,24 @@ export interface CodingChallenge {
     constraints?: string[];
 }
 
+// Enhanced AI face detection types
+export type FaceEmotion = 'neutral' | 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised';
+
+export interface FaceEmotionData {
+    dominant: FaceEmotion;
+    confidence: number;
+    all: Record<FaceEmotion, number>;
+}
+
+export interface FaceStatusUpdate {
+    timestamp: string;
+    status: 'face_detected' | 'no_face' | 'multiple_faces' | 'gaze_away';
+    faceCount: number;
+    emotion?: FaceEmotionData;
+    identityDistance?: number;
+    identityMatch?: 'verified' | 'warning' | 'mismatch';
+}
+
 export interface CheatAlert {
     id: string;
     session_id: string;
@@ -130,6 +151,12 @@ export interface WebRTCSignal {
     candidate?: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null };
 }
 
+// Enhanced face detection socket payload
+export interface FaceStatusPayload {
+    session_id: string;
+    update: FaceStatusUpdate;
+}
+
 export interface ServerToClientEvents {
     live_event_update: (event: EventLog) => void;
     score_update: (score: ScoreUpdate) => void;
@@ -145,6 +172,13 @@ export interface ServerToClientEvents {
     webrtc_answer: (data: { signal: WebRTCSignal; from_session_id: string }) => void;
     webrtc_ice_candidate: (data: { candidate: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null }; from_session_id: string }) => void;
     peer_call_ready: (data: { session_id: string }) => void;
+    // Screen share signaling
+    screen_share_offer: (data: { signal: any; session_id: string }) => void;
+    screen_share_answer: (data: { signal: any }) => void;
+    screen_share_ice: (data: { candidate: any }) => void;
+    screen_share_stopped: (data: {}) => void;
+    // Enhanced face detection
+    face_status_update: (data: FaceStatusUpdate) => void;
 }
 
 export interface ClientToServerEvents {
@@ -161,4 +195,11 @@ export interface ClientToServerEvents {
     webrtc_offer: (data: { session_id: string; signal: WebRTCSignal }) => void;
     webrtc_answer: (data: { meeting_id: string; signal: WebRTCSignal }) => void;
     webrtc_ice_candidate: (data: { target: 'recruiter' | 'candidate'; meeting_id?: string; session_id?: string; candidate: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null } }) => void;
+    // Screen share signaling
+    screen_share_offer: (data: { meeting_id: string; session_id: string; signal: any }) => void;
+    screen_share_answer: (data: { session_id: string; signal: any }) => void;
+    screen_share_ice: (data: { target: 'recruiter' | 'candidate'; meeting_id?: string; session_id?: string; candidate: any }) => void;
+    screen_share_stopped: (data: { meeting_id: string }) => void;
+    // Enhanced face detection
+    face_status_update: (data: { session_id: string; update: FaceStatusUpdate }) => void;
 }
