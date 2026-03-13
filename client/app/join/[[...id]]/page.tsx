@@ -7,6 +7,11 @@ import Link from 'next/link';
 // ── Step states ─────────────────────────────────────────────────────────────
 type JoinStep = 'details' | 'face_capture' | 'joining';
 
+// Preload AI models as soon as this module is imported (while user fills Step 1)
+if (typeof window !== 'undefined') {
+    import('@/hooks/useFaceDetection').then(m => m.preloadCaptureModels()).catch(() => { });
+}
+
 export default function JoinPage() {
     const router = useRouter();
     const params = useParams();
@@ -120,15 +125,13 @@ export default function JoinPage() {
     useEffect(() => {
         if (step === 'face_capture') {
             startCamera();
-            // Preload face-api models in background
+            // Trigger model load (will be near-instant if preload already ran)
             if (!modelsLoaded && !modelsLoading) {
                 setModelsLoading(true);
                 import('@/hooks/useFaceDetection').then(async (mod) => {
-                    // captureReferenceDescriptor calls loadFaceApi internally,
-                    // but we trigger it here early so models are cached.
-                    // We just call it with a fake detection to warm up.
+                    mod.preloadCaptureModels();
+                    // Wait for a tiny capture attempt so we know models are ready
                     try {
-                        // @ts-ignore — just preloading
                         await mod.captureReferenceDescriptor(document.createElement('video')).catch(() => { });
                     } catch { }
                     setModelsLoaded(true);

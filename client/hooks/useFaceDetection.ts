@@ -17,22 +17,38 @@ interface UseFaceDetectionOptions {
 }
 
 // ── face-api.js loading (browser-only) ──────────────────────────────────────
-const FACE_API_CDN = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
-let faceApiLoaded = false;
+// Models served from public/models/ (downloaded from face-api.js GitHub repo)
+const FACE_API_MODEL_PATH = '/models';
 let faceapi: any = null;
+let captureModelsLoaded = false;   // detector + landmarks + recognition (for capture)
+let allModelsLoaded = false;       // + expression (for full monitoring)
 
-async function loadFaceApi() {
-    if (faceApiLoaded) return faceapi;
-    const mod = await import('face-api.js');
-    faceapi = mod;
+// Tier 1: Load only the 3 models needed for face capture (~500KB total)
+async function loadFaceApiForCapture() {
+    if (captureModelsLoaded) return faceapi;
+    if (!faceapi) faceapi = await import('face-api.js');
     await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_CDN),
-        faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_API_CDN),
-        faceapi.nets.faceExpressionNet.loadFromUri(FACE_API_CDN),       // 🆕 Emotion
-        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_CDN),      // 🆕 Identity
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_PATH),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_API_MODEL_PATH),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_PATH),
     ]);
-    faceApiLoaded = true;
+    captureModelsLoaded = true;
     return faceapi;
+}
+
+// Tier 2: Load all 4 models (adds expression net for emotion analysis)
+async function loadFaceApi() {
+    await loadFaceApiForCapture();
+    if (allModelsLoaded) return faceapi;
+    await faceapi.nets.faceExpressionNet.loadFromUri(FACE_API_MODEL_PATH);
+    allModelsLoaded = true;
+    return faceapi;
+}
+
+// Exported preloader — call from join page as early as possible
+export function preloadCaptureModels(): void {
+    if (typeof window === 'undefined') return;
+    loadFaceApiForCapture().catch(() => { });
 }
 
 // ── Snapshot helper ─────────────────────────────────────────────────────────
@@ -394,7 +410,7 @@ export function useFaceDetection({
 // Retries up to 3 times with progressively lower thresholds to maximise
 // success across different lighting / background conditions.
 export async function captureReferenceDescriptor(video: HTMLVideoElement): Promise<Float32Array | null> {
-    const api = await loadFaceApi();
+    const api = await loadFaceApiForCapture(); // Only needs detector + landmarks + recognition
 
     // Each attempt uses a larger input and/or lower confidence threshold
     const attempts: { inputSize: number; scoreThreshold: number }[] = [
