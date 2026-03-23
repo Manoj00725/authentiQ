@@ -22,18 +22,27 @@ const FACE_API_MODEL_PATH = '/models';
 let faceapi: any = null;
 let captureModelsLoaded = false;   // detector + landmarks + recognition (for capture)
 let allModelsLoaded = false;       // + expression (for full monitoring)
+let captureLoadPromise: Promise<any> | null = null; // singleton guard
 
-// Tier 1: Load only the 3 models needed for face capture (~500KB total)
+// Tier 1: Load only the 3 models needed for face capture
 async function loadFaceApiForCapture() {
     if (captureModelsLoaded) return faceapi;
-    if (!faceapi) faceapi = await import('face-api.js');
-    await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_PATH),
-        faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_API_MODEL_PATH),
-        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_PATH),
-    ]);
-    captureModelsLoaded = true;
-    return faceapi;
+    // Deduplicate concurrent calls — return the same in-flight promise
+    if (captureLoadPromise) return captureLoadPromise;
+
+    captureLoadPromise = (async () => {
+        if (!faceapi) faceapi = await import('face-api.js');
+        await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(FACE_API_MODEL_PATH),
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_API_MODEL_PATH),
+            faceapi.nets.faceRecognitionNet.loadFromUri(FACE_API_MODEL_PATH),
+        ]);
+        captureModelsLoaded = true;
+        console.log('[face-api] Capture models loaded ✅');
+        return faceapi;
+    })();
+
+    return captureLoadPromise;
 }
 
 // Tier 2: Load all 4 models (adds expression net for emotion analysis)
@@ -45,10 +54,11 @@ async function loadFaceApi() {
     return faceapi;
 }
 
-// Exported preloader — call from join page as early as possible
-export function preloadCaptureModels(): void {
+// Exported preloader — call from join page as early as possible.
+// Returns a promise that resolves when capture models are ready.
+export async function preloadCaptureModels(): Promise<void> {
     if (typeof window === 'undefined') return;
-    loadFaceApiForCapture().catch(() => { });
+    await loadFaceApiForCapture();
 }
 
 // ── Snapshot helper ─────────────────────────────────────────────────────────

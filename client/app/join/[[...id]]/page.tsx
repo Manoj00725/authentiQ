@@ -125,15 +125,11 @@ export default function JoinPage() {
     useEffect(() => {
         if (step === 'face_capture') {
             startCamera();
-            // Trigger model load (will be near-instant if preload already ran)
+            // Load models (will be near-instant if module-level preload already ran)
             if (!modelsLoaded && !modelsLoading) {
                 setModelsLoading(true);
                 import('@/hooks/useFaceDetection').then(async (mod) => {
-                    mod.preloadCaptureModels();
-                    // Wait for a tiny capture attempt so we know models are ready
-                    try {
-                        await mod.captureReferenceDescriptor(document.createElement('video')).catch(() => { });
-                    } catch { }
+                    await mod.preloadCaptureModels();
                     setModelsLoaded(true);
                     setModelsLoading(false);
                 }).catch(() => {
