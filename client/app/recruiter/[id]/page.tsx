@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useVideoCall } from '@/hooks/useVideoCall';
-import type { EventLog, ScoreUpdate, CheatAlert, CodeUpdate, CodingChallenge, CodingLanguage, FaceStatusUpdate, FaceEmotionData } from '@/types';
+import type { EventLog, ScoreUpdate, CheatAlert, CodeUpdate, CodingChallenge, CodingLanguage, FaceStatusUpdate, FaceEmotionData, CandidateAppeal } from '@/types';
+import { getQualityColor } from '@/hooks/useNetworkHealth';
 import {
     AreaChart, Area, LineChart, Line, BarChart, Bar,
     XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
@@ -21,6 +22,7 @@ const EVENT_ICONS: Record<string, string> = {
     keyboard_shortcut_cheat: '⌨️', ai_pattern_detected: '🤖', rapid_solution: '⚡',
     face_not_detected: '📷', multiple_faces_detected: '👥', gaze_away: '👀',
     suspicious_emotion: '🎭', face_mismatch: '🚨',
+    vm_detected: '🖥️', network_unstable: '📡',
 };
 const CHEAT_LABELS: Record<string, string> = {
     code_paste: 'CODE PASTE', devtools_open: 'DEVTOOLS', right_click_attempt: 'RIGHT CLICK',
@@ -29,6 +31,7 @@ const CHEAT_LABELS: Record<string, string> = {
     fullscreen_exit: 'FULLSCREEN EXIT', word_burst: 'WORD BURST', window_blur: 'WINDOW UNFOCUS',
     face_not_detected: 'FACE MISSING', multiple_faces_detected: 'MULTIPLE FACES', gaze_away: 'LOOKING AWAY',
     suspicious_emotion: 'EMOTION ALERT', face_mismatch: 'ID MISMATCH',
+    vm_detected: 'VM DETECTED', network_unstable: 'NET UNSTABLE',
 };
 const LANGUAGE_LABELS: Record<string, string> = { javascript: 'JS', python: 'PY', java: 'JV', cpp: 'C++', typescript: 'TS' };
 
@@ -128,6 +131,16 @@ export default function RecruiterDashboard() {
     const [latestFaceStatus, setLatestFaceStatus] = useState<FaceStatusUpdate | null>(null);
     const [faceTimeline, setFaceTimeline] = useState<{ t: string; status: string; emotion: string; idMatch: string }[]>([]);
 
+    // Network health from candidate
+    const [candidateNetwork, setCandidateNetwork] = useState<{ latency: number; quality: string }>({ latency: 0, quality: 'good' });
+
+    // Confidence score (trust index)
+    const [confidenceScore, setConfidenceScore] = useState(100);
+    const [confidenceBreakdown, setConfidenceBreakdown] = useState({ hard_facts: 0, ai_inferences: 0, heuristics: 0 });
+
+    // Appeals from candidate
+    const [appeals, setAppeals] = useState<Map<string, CandidateAppeal>>(new Map());
+
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const screenVideoRef = useRef<HTMLVideoElement>(null);
@@ -211,8 +224,47 @@ export default function RecruiterDashboard() {
                 return next.length > 60 ? next.slice(-60) : next;
             });
         });
-        return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); };
+        // Network health from candidate
+        const u8 = on('network_health', (data: { latency: number; quality: string }) => {
+            setCandidateNetwork(data);
+        });
+        // Candidate appeals
+        const u9 = on('candidate_appeal', (appeal: CandidateAppeal) => {
+            setAppeals(prev => {
+                const next = new Map(prev);
+                next.set(appeal.alert_id, appeal);
+                return next;
+            });
+        });
+        return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); };
     }, [on, elapsed]);
+
+    // Update confidence from score_update events
+    useEffect(() => {
+        const unsub = on('score_update', (u: ScoreUpdate) => {
+            if (u.confidence_score !== undefined) setConfidenceScore(u.confidence_score);
+            if (u.confidence_breakdown) setConfidenceBreakdown(u.confidence_breakdown);
+        });
+        return unsub;
+    }, [on]);
+
+    // Handle appeal actions
+    const handleAppealAction = useCallback((alertId: string, action: 'accepted' | 'dismissed' | 'escalated') => {
+        emit('appeal_response', {
+            session_id: candidateSessionId,
+            alert_id: alertId,
+            action,
+        });
+        // Update local state
+        setAppeals(prev => {
+            const next = new Map(prev);
+            const appeal = next.get(alertId);
+            if (appeal) {
+                next.set(alertId, { ...appeal, recruiter_action: action });
+            }
+            return next;
+        });
+    }, [emit, candidateSessionId]);
 
     // Timer
     useEffect(() => {
@@ -306,11 +358,45 @@ export default function RecruiterDashboard() {
 
                     {/* Score gauge */}
                     <div className="glass-card p-4 flex flex-col items-center gap-2">
-                        <p className="label self-start">Authenticity Score</p>
+                        <p className="label self-start">Integrity Score</p>
                         <ScoreGauge score={score} />
                         <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
                             {events.length} events · {cheatAlerts.length} alerts
                         </p>
+                    </div>
+
+                    {/* Confidence / Trust Index gauge */}
+                    <div className="glass-card p-4 flex flex-col items-center gap-2">
+                        <p className="label self-start">Trust Index</p>
+                        <ScoreGauge score={confidenceScore} />
+                        <div className="w-full space-y-1 mt-1">
+                            <div className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#10b981' }}>● Hard Facts</span>
+                                <span className="font-bold" style={{ color: '#10b981' }}>{confidenceBreakdown.hard_facts}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#8b5cf6' }}>● AI Inferences</span>
+                                <span className="font-bold" style={{ color: '#8b5cf6' }}>{confidenceBreakdown.ai_inferences}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                                <span style={{ color: '#f59e0b' }}>● Heuristics</span>
+                                <span className="font-bold" style={{ color: '#f59e0b' }}>{confidenceBreakdown.heuristics}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Network health */}
+                    <div className="glass-card p-4">
+                        <p className="label mb-2">📡 Candidate Connection</p>
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full" style={{ background: getQualityColor(candidateNetwork.quality as any) }} />
+                            <span className="text-xs font-semibold" style={{ color: getQualityColor(candidateNetwork.quality as any) }}>
+                                {candidateNetwork.quality.charAt(0).toUpperCase() + candidateNetwork.quality.slice(1)}
+                            </span>
+                            <span className="text-xs ml-auto font-mono" style={{ color: 'var(--text-muted)' }}>
+                                {candidateNetwork.latency}ms
+                            </span>
+                        </div>
                     </div>
 
                     {/* Event breakdown */}
@@ -782,6 +868,41 @@ export default function RecruiterDashboard() {
                                             </div>
                                         )}
                                         {alert.code_snapshot && <div className="px-3 pb-2 text-xs" style={{ color: 'var(--text-muted)' }}>{expanded ? '▲ Hide' : '▼ Snapshot'}</div>}
+
+                                        {/* Candidate Appeal Display */}
+                                        {appeals.has(alert.id) && (
+                                            <div className="border-t px-3 py-2.5" style={{ borderColor: 'rgba(99,102,241,0.25)', background: 'rgba(99,102,241,0.08)' }}>
+                                                <div className="flex items-start gap-2 mb-2">
+                                                    <span className="text-xs" style={{ color: '#a5b4fc' }}>💬 Candidate says:</span>
+                                                    <span className="text-xs italic" style={{ color: '#e2e8f0' }}>"{appeals.get(alert.id)!.candidate_message}"</span>
+                                                </div>
+                                                {!appeals.get(alert.id)!.recruiter_action ? (
+                                                    <div className="flex gap-1.5">
+                                                        <button onClick={(e) => { e.stopPropagation(); handleAppealAction(alert.id, 'accepted'); }}
+                                                            className="text-xs px-2 py-1 rounded-md font-semibold" style={{ background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
+                                                            ✓ Accept
+                                                        </button>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleAppealAction(alert.id, 'dismissed'); }}
+                                                            className="text-xs px-2 py-1 rounded-md font-semibold" style={{ background: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                                            Dismiss
+                                                        </button>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleAppealAction(alert.id, 'escalated'); }}
+                                                            className="text-xs px-2 py-1 rounded-md font-semibold" style={{ background: 'rgba(239,68,68,0.2)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
+                                                            ⚠ Escalate
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-xs font-semibold" style={{
+                                                        color: appeals.get(alert.id)!.recruiter_action === 'accepted' ? '#10b981'
+                                                            : appeals.get(alert.id)!.recruiter_action === 'escalated' ? '#f87171' : '#94a3b8'
+                                                    }}>
+                                                        {appeals.get(alert.id)!.recruiter_action === 'accepted' ? '✓ Accepted — score partially restored'
+                                                            : appeals.get(alert.id)!.recruiter_action === 'escalated' ? '⚠ Escalated for review'
+                                                                : '✕ Dismissed'}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}

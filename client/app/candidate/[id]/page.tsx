@@ -8,6 +8,8 @@ import { useVideoCall } from '@/hooks/useVideoCall';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
 import { useTabLock } from '@/hooks/useTabLock';
 import { useFullscreen } from '@/hooks/useFullscreen';
+import { useVMDetection } from '@/hooks/useVMDetection';
+import { useNetworkHealth, getQualityColor } from '@/hooks/useNetworkHealth';
 import type { BehaviorEvent, Severity, CodingChallenge, CodingLanguage, FaceStatusUpdate } from '@/types';
 
 const DEFAULT_CHALLENGES: CodingChallenge[] = [
@@ -136,6 +138,8 @@ export default function CandidatePage() {
             gaze_away: '👀 Please focus on the screen',
             suspicious_emotion: '🎭 Unusual emotional pattern detected',
             face_mismatch: '🚨 Identity verification failed!',
+            vm_detected: '🖥️ Virtual machine detected!',
+            network_unstable: '📡 Network connection unstable',
         };
         const label = labels[event.event_type];
         if (label) setWarnings(prev => [...prev.slice(-3), label]);
@@ -194,6 +198,70 @@ export default function CandidatePage() {
         const iv = setInterval(() => setElapsed(s => s + 1), 1000);
         return () => clearInterval(iv);
     }, []);
+
+    // ── VM Detection ─────────────────────────────────────────────────────────
+    const { isVM, vmIndicators, checked: vmChecked } = useVMDetection();
+
+    useEffect(() => {
+        if (vmChecked && isVM && sessionId) {
+            handleBehaviorEvent({
+                event_type: 'vm_detected',
+                timestamp: new Date().toISOString(),
+                severity: 'critical',
+                metadata: { indicators: vmIndicators },
+            });
+        }
+    }, [vmChecked, isVM, sessionId, vmIndicators, handleBehaviorEvent]);
+
+    // ── Network Health ───────────────────────────────────────────────────────
+    const networkHealth = useNetworkHealth({
+        sessionId,
+        emit,
+        on,
+        enabled: !!sessionId && connected,
+    });
+
+    // ── Human-in-the-Loop Appeals ───────────────────────────────────────────
+    const [appealPrompt, setAppealPrompt] = useState<{ alertId: string; eventType: string } | null>(null);
+    const [appealText, setAppealText] = useState('');
+    const [appealSent, setAppealSent] = useState(false);
+    const appealTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Show appeal prompt on high/critical events
+    const APPEALABLE_EVENTS = ['multiple_faces_detected', 'face_not_detected', 'vm_detected', 'face_mismatch', 'suspicious_emotion'];
+
+    // Listen for cheat alerts that the candidate can appeal
+    useEffect(() => {
+        const unsub = on('error', (msg: string) => {
+            // Parse event type from the warning message
+            const match = msg.match(/\(([^)]+)\)/);
+            if (match) {
+                const eventType = match[1];
+                if (APPEALABLE_EVENTS.includes(eventType)) {
+                    const alertId = `appeal_${Date.now()}`;
+                    setAppealPrompt({ alertId, eventType });
+                    setAppealSent(false);
+                    setAppealText('');
+                    // Auto-dismiss after 30 seconds
+                    if (appealTimeoutRef.current) clearTimeout(appealTimeoutRef.current);
+                    appealTimeoutRef.current = setTimeout(() => setAppealPrompt(null), 30000);
+                }
+            }
+        });
+        return () => { unsub(); if (appealTimeoutRef.current) clearTimeout(appealTimeoutRef.current); };
+    }, [on]);
+
+    const submitAppeal = useCallback(() => {
+        if (!appealPrompt || !appealText.trim()) return;
+        emit('candidate_appeal', {
+            session_id: sessionId,
+            alert_id: appealPrompt.alertId,
+            event_type: appealPrompt.eventType,
+            message: appealText.trim(),
+        });
+        setAppealSent(true);
+        setTimeout(() => setAppealPrompt(null), 3000);
+    }, [appealPrompt, appealText, emit, sessionId]);
 
     // ── Video call ─────────────────────────────────────────────────────────────
     const {
@@ -324,6 +392,11 @@ export default function CandidatePage() {
                 <div className="flex items-center gap-3">
                     <span className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>Candidate</span>
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Coding Interview · Challenge {currentIndex + 1}/{challenges.length}</span>
+                    {/* Network health badge */}
+                    <span className="text-xs px-2 py-0.5 rounded-full font-semibold flex items-center gap-1"
+                        style={{ background: `${getQualityColor(networkHealth.quality)}18`, border: `1px solid ${getQualityColor(networkHealth.quality)}40`, color: getQualityColor(networkHealth.quality) }}>
+                        📡 {networkHealth.quality === 'disconnected' ? 'Offline' : `${networkHealth.latency}ms`}
+                    </span>
                     {/* Face detection badge */}
                     {localStream && (
                         <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
@@ -388,6 +461,42 @@ export default function CandidatePage() {
                             {w}
                         </div>
                     ))}
+                </div>
+            )}
+
+            {/* Appeal prompt — appears when high/critical alert is triggered */}
+            {appealPrompt && (
+                <div className="shrink-0 px-4 py-3" style={{ background: 'rgba(99,102,241,0.1)', borderBottom: '1px solid rgba(99,102,241,0.25)' }}>
+                    {appealSent ? (
+                        <div className="text-center text-sm" style={{ color: '#a5b4fc' }}>
+                            ✅ Your context has been sent to the recruiter. Thank you.
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-3">
+                            <div className="text-xs shrink-0" style={{ color: '#c7d2fe' }}>
+                                ⚠️ We noticed a change in your environment. Any context? <span style={{ color: '#94a3b8' }}>(optional)</span>
+                            </div>
+                            <input
+                                type="text"
+                                value={appealText}
+                                onChange={e => setAppealText(e.target.value.slice(0, 200))}
+                                placeholder="e.g., My roommate walked behind me"
+                                className="flex-1 text-xs px-3 py-1.5 rounded-lg"
+                                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', outline: 'none' }}
+                                onKeyDown={e => e.key === 'Enter' && submitAppeal()}
+                            />
+                            <button onClick={submitAppeal} disabled={!appealText.trim()}
+                                className="text-xs px-3 py-1.5 rounded-lg font-semibold shrink-0"
+                                style={{ background: appealText.trim() ? '#6366f1' : '#374151', color: '#fff' }}>
+                                Send
+                            </button>
+                            <button onClick={() => setAppealPrompt(null)}
+                                className="text-xs px-2 py-1.5 rounded-lg shrink-0"
+                                style={{ color: '#94a3b8' }}>
+                                ✕
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 

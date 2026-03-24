@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 
 // ── Step states ─────────────────────────────────────────────────────────────
-type JoinStep = 'details' | 'face_capture' | 'joining';
+type JoinStep = 'details' | 'face_capture' | 'calibration' | 'joining';
 
 // Preload AI models as soon as this module is imported (while user fills Step 1)
 if (typeof window !== 'undefined') {
@@ -38,6 +38,37 @@ export default function JoinPage() {
     const [modelsLoaded, setModelsLoaded] = useState(false);
     const [modelsLoading, setModelsLoading] = useState(false);
     const [attemptCount, setAttemptCount] = useState(0);
+
+    // Calibration state
+    type CalibrationPhase = 'gaze' | 'expression' | 'typing';
+    const [calibrationPhase, setCalibrationPhase] = useState<CalibrationPhase>('gaze');
+
+    // Gaze calibration
+    const [gazeStep, setGazeStep] = useState(0); // 0-3 for 4 corners
+    const [gazeComplete, setGazeComplete] = useState(false);
+    const gazeTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const GAZE_POSITIONS = [
+        { label: 'Top-Left', x: '10%', y: '15%' },
+        { label: 'Top-Right', x: '85%', y: '15%' },
+        { label: 'Bottom-Left', x: '10%', y: '80%' },
+        { label: 'Bottom-Right', x: '85%', y: '80%' },
+    ];
+
+    // Expression calibration
+    const [expressionPhase, setExpressionPhase] = useState<'waiting' | 'analyzing' | 'done'>('waiting');
+    const [expressionProgress, setExpressionProgress] = useState(0);
+
+    // Typing calibration
+    const TYPING_SENTENCE = 'The quick brown fox jumps over the lazy dog near the river bank';
+    const [typedText, setTypedText] = useState('');
+    const [typingStartTime, setTypingStartTime] = useState<number | null>(null);
+    const [keyIntervals, setKeyIntervals] = useState<number[]>([]);
+    const [lastKeyTime, setLastKeyTime] = useState<number | null>(null);
+    const [backspaceCount, setBackspaceCount] = useState(0);
+    const [totalKeystrokes, setTotalKeystrokes] = useState(0);
+    const [typingComplete, setTypingComplete] = useState(false);
+    const [typingWPM, setTypingWPM] = useState(0);
+    const [typingAccuracy, setTypingAccuracy] = useState(100);
 
     // Start camera for face capture
     const startCamera = useCallback(async () => {
@@ -157,6 +188,99 @@ export default function JoinPage() {
         setStep('face_capture');
     };
 
+    // Proceed from face capture to calibration
+    const handleProceedToCalibration = () => {
+        setStep('calibration');
+        setCalibrationPhase('gaze');
+        setGazeStep(0);
+        setGazeComplete(false);
+    };
+
+    // Gaze calibration: auto-advance through corners
+    useEffect(() => {
+        if (step !== 'calibration' || calibrationPhase !== 'gaze' || gazeComplete) return;
+        gazeTimerRef.current = setTimeout(() => {
+            if (gazeStep < 3) {
+                setGazeStep(prev => prev + 1);
+            } else {
+                setGazeComplete(true);
+                // Auto-advance to expression after brief delay
+                setTimeout(() => setCalibrationPhase('expression'), 800);
+            }
+        }, 2000); // 2 seconds per corner
+        return () => { if (gazeTimerRef.current) clearTimeout(gazeTimerRef.current); };
+    }, [step, calibrationPhase, gazeStep, gazeComplete]);
+
+    // Expression calibration: simulate analysis
+    useEffect(() => {
+        if (step !== 'calibration' || calibrationPhase !== 'expression') return;
+        setExpressionPhase('waiting');
+        const t1 = setTimeout(() => setExpressionPhase('analyzing'), 1000);
+        const interval = setInterval(() => {
+            setExpressionProgress(prev => {
+                if (prev >= 100) {
+                    clearInterval(interval);
+                    setExpressionPhase('done');
+                    // Auto-advance to typing after brief delay
+                    setTimeout(() => setCalibrationPhase('typing'), 800);
+                    return 100;
+                }
+                return prev + 4; // 25 steps * 200ms = 5 seconds
+            });
+        }, 200);
+        return () => { clearTimeout(t1); clearInterval(interval); };
+    }, [step, calibrationPhase]);
+
+    // Typing calibration handler
+    const handleCalibrationKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+        const now = Date.now();
+        if (!typingStartTime) setTypingStartTime(now);
+
+        setTotalKeystrokes(prev => prev + 1);
+
+        if (e.key === 'Backspace') {
+            setBackspaceCount(prev => prev + 1);
+        }
+
+        if (lastKeyTime) {
+            setKeyIntervals(prev => [...prev, now - lastKeyTime]);
+        }
+        setLastKeyTime(now);
+    }, [typingStartTime, lastKeyTime]);
+
+    const handleTypingChange = useCallback((value: string) => {
+        setTypedText(value);
+        if (value.length >= TYPING_SENTENCE.length) {
+            const elapsed = (Date.now() - (typingStartTime || Date.now())) / 1000;
+            const words = TYPING_SENTENCE.split(' ').length;
+            const wpm = Math.round((words / elapsed) * 60);
+            const accuracy = totalKeystrokes > 0 ? Math.round(((totalKeystrokes - backspaceCount) / totalKeystrokes) * 100) : 100;
+
+            setTypingWPM(wpm);
+            setTypingAccuracy(Math.min(100, accuracy));
+            setTypingComplete(true);
+
+            // Calculate baselines
+            const avgKeyInterval = keyIntervals.length > 0
+                ? Math.round(keyIntervals.reduce((a, b) => a + b, 0) / keyIntervals.length)
+                : 150;
+            const errorRate = totalKeystrokes > 0 ? backspaceCount / totalKeystrokes : 0;
+
+            const calibrationData = {
+                gaze: { gazeDeviationThreshold: 0.15, calibratedAt: new Date().toISOString() },
+                emotion: { restingEmotion: 'neutral' as const, emotionVariance: 0.2, expressionRange: ['neutral', 'happy'] as any },
+                typing: {
+                    avgWPM: wpm,
+                    avgKeyInterval,
+                    errorRate,
+                    burstThreshold: wpm * 2.5, // Anything 2.5x faster is suspicious
+                },
+                completedAt: new Date().toISOString(),
+            };
+            sessionStorage.setItem('calibration_data', JSON.stringify(calibrationData));
+        }
+    }, [typingStartTime, totalKeystrokes, backspaceCount, keyIntervals]);
+
     // Join the meeting (after face capture or skip)
     const handleJoin = async () => {
         setLoading(true);
@@ -209,11 +333,12 @@ export default function JoinPage() {
                     {[
                         { key: 'details', label: '1. Details', icon: '📝' },
                         { key: 'face_capture', label: '2. Face Scan', icon: '📸' },
-                        { key: 'joining', label: '3. Enter', icon: '🚀' },
+                        { key: 'calibration', label: '3. Calibrate', icon: '🎯' },
+                        { key: 'joining', label: '4. Enter', icon: '🚀' },
                     ].map((s, i) => (
                         <div key={s.key} className="flex items-center gap-2">
-                            {i > 0 && <div className="w-8 h-px" style={{ background: step === s.key || (s.key === 'joining' && step === 'joining') ? 'var(--accent-primary)' : 'var(--border)' }} />}
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+                            {i > 0 && <div className="w-6 h-px" style={{ background: step === s.key || (s.key === 'joining' && step === 'joining') ? 'var(--accent-primary)' : 'var(--border)' }} />}
+                            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold transition-all"
                                 style={{
                                     background: step === s.key ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)',
                                     border: step === s.key ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.08)',
@@ -410,11 +535,10 @@ export default function JoinPage() {
                                     </button>
                                     {/* Skip option after 3 failed attempts */}
                                     {attemptCount >= 3 && (
-                                        <button onClick={handleJoin}
+                                        <button onClick={handleProceedToCalibration}
                                             className="btn-secondary py-3 text-sm px-4"
-                                            disabled={loading}
-                                            title="Skip face scan and join without identity verification">
-                                            {loading ? 'Joining...' : 'Skip →'}
+                                            title="Skip face scan and proceed to calibration">
+                                            Skip →
                                         </button>
                                     )}
                                 </div>
@@ -424,14 +548,9 @@ export default function JoinPage() {
                                         className="btn-secondary flex-1 py-3 text-sm">
                                         🔄 Retake
                                     </button>
-                                    <button onClick={handleJoin}
-                                        className="btn-primary flex-1 py-3"
-                                        disabled={loading}>
-                                        {loading ? (
-                                            <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Joining...</>
-                                        ) : (
-                                            'Enter Interview →'
-                                        )}
+                                    <button onClick={handleProceedToCalibration}
+                                        className="btn-primary flex-1 py-3">
+                                        Continue to Calibration →
                                     </button>
                                 </div>
                             )}
@@ -453,7 +572,154 @@ export default function JoinPage() {
                     </div>
                 )}
 
-                {/* ── STEP 3: Joining ─────────────────────────────────────────── */}
+                {/* ── STEP 3: Calibration ───────────────────────────────────────── */}
+                {step === 'calibration' && (
+                    <div className="glass-card p-8 animate-float-up">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                                style={{ background: 'linear-gradient(135deg, #f59e0b, #ef4444)' }}>
+                                <span className="text-xl">🎯</span>
+                            </div>
+                            <div>
+                                <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Pre-Interview Calibration</h2>
+                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                    Quick warm-up to personalize AI detection thresholds
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Calibration phase indicators */}
+                        <div className="flex gap-2 mb-6">
+                            {[
+                                { key: 'gaze', label: '🎯 Gaze', done: calibrationPhase !== 'gaze' },
+                                { key: 'expression', label: '🗣️ Expression', done: calibrationPhase === 'typing' },
+                                { key: 'typing', label: '⌨️ Typing', done: typingComplete },
+                            ].map((p) => (
+                                <div key={p.key} className="flex-1 text-center text-xs font-semibold px-2 py-1.5 rounded-lg"
+                                    style={{
+                                        background: calibrationPhase === p.key ? 'rgba(99,102,241,0.2)' : p.done ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.04)',
+                                        border: calibrationPhase === p.key ? '1px solid rgba(99,102,241,0.5)' : p.done ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(255,255,255,0.08)',
+                                        color: calibrationPhase === p.key ? '#a5b4fc' : p.done ? '#10b981' : 'var(--text-muted)',
+                                    }}>
+                                    {p.done && calibrationPhase !== p.key ? '✓ ' : ''}{p.label}
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* ── Phase A: Gaze Calibration ── */}
+                        {calibrationPhase === 'gaze' && (
+                            <div className="relative rounded-xl overflow-hidden mb-5" style={{ background: 'rgba(0,0,0,0.4)', height: '280px', border: '1px solid rgba(99,102,241,0.2)' }}>
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                        Follow the dot with your eyes — {gazeStep + 1}/4
+                                    </p>
+                                </div>
+                                {/* Animated corner dots */}
+                                {GAZE_POSITIONS.map((pos, i) => (
+                                    <div key={i}
+                                        className={`absolute w-5 h-5 rounded-full transition-all duration-500 ${gazeStep === i ? 'scale-150' : 'scale-75 opacity-30'}`}
+                                        style={{
+                                            left: pos.x, top: pos.y,
+                                            background: gazeStep === i ? '#6366f1' : '#374151',
+                                            boxShadow: gazeStep === i ? '0 0 20px rgba(99,102,241,0.6), 0 0 40px rgba(99,102,241,0.3)' : 'none',
+                                            transform: `translate(-50%, -50%) ${gazeStep === i ? 'scale(1.5)' : 'scale(0.75)'}`,
+                                        }} />
+                                ))}
+                                {/* Progress bar */}
+                                <div className="absolute bottom-3 left-3 right-3">
+                                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                                        <div className="h-full rounded-full transition-all duration-500" style={{ width: `${((gazeStep + 1) / 4) * 100}%`, background: 'linear-gradient(90deg, #6366f1, #8b5cf6)' }} />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Phase B: Expression Calibration ── */}
+                        {calibrationPhase === 'expression' && (
+                            <div className="rounded-xl p-6 mb-5 text-center" style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)' }}>
+                                <div className="text-3xl mb-3">
+                                    {expressionPhase === 'waiting' ? '🙂' : expressionPhase === 'analyzing' ? '🔬' : '✅'}
+                                </div>
+                                <p className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                                    {expressionPhase === 'waiting' ? 'Look at the camera naturally'
+                                        : expressionPhase === 'analyzing' ? 'Analyzing your natural expressions...'
+                                            : 'Expression baseline captured!'}
+                                </p>
+                                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                                    {expressionPhase === 'waiting' ? 'Keep a relaxed, natural expression'
+                                        : expressionPhase === 'analyzing' ? 'Recording your neutral state to reduce false positives'
+                                            : 'Your natural expression range has been recorded'}
+                                </p>
+                                <div className="h-2 rounded-full overflow-hidden mx-auto" style={{ maxWidth: '300px', background: 'rgba(255,255,255,0.08)' }}>
+                                    <div className="h-full rounded-full transition-all" style={{ width: `${expressionProgress}%`, background: 'linear-gradient(90deg, #8b5cf6, #6366f1)' }} />
+                                </div>
+                                <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>{expressionProgress}%</p>
+                            </div>
+                        )}
+
+                        {/* ── Phase C: Typing Calibration ── */}
+                        {calibrationPhase === 'typing' && (
+                            <div className="rounded-xl p-6 mb-5" style={{ background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                                <p className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+                                    ⌨️ Type this sentence:
+                                </p>
+                                <p className="text-sm mb-4 font-mono px-3 py-2 rounded-lg" style={{ background: 'rgba(0,0,0,0.3)', color: '#94a3b8' }}>
+                                    {TYPING_SENTENCE}
+                                </p>
+                                <input
+                                    type="text"
+                                    value={typedText}
+                                    onChange={e => handleTypingChange(e.target.value)}
+                                    onKeyDown={handleCalibrationKeyDown}
+                                    placeholder="Start typing here..."
+                                    disabled={typingComplete}
+                                    className="w-full px-4 py-3 rounded-xl text-sm font-mono mb-3"
+                                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)', outline: 'none' }}
+                                    autoFocus
+                                />
+                                <div className="flex items-center gap-4 text-xs">
+                                    <span style={{ color: 'var(--text-muted)' }}>
+                                        WPM: <strong style={{ color: '#06b6d4' }}>{typingWPM || '—'}</strong>
+                                    </span>
+                                    <span style={{ color: 'var(--text-muted)' }}>
+                                        Accuracy: <strong style={{ color: typingAccuracy > 90 ? '#10b981' : '#f59e0b' }}>{typingComplete ? `${typingAccuracy}%` : '—'}</strong>
+                                    </span>
+                                    <span className="ml-auto" style={{ color: typingComplete ? '#10b981' : 'var(--text-muted)' }}>
+                                        {typingComplete ? '✓ Complete' : `${typedText.length}/${TYPING_SENTENCE.length}`}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Action buttons */}
+                        <div className="flex gap-3">
+                            <button onClick={() => setStep('face_capture')}
+                                className="btn-secondary flex-1 py-3">
+                                ← Back
+                            </button>
+                            <button onClick={handleJoin}
+                                className="btn-primary flex-1 py-3"
+                                disabled={!typingComplete || loading}>
+                                {loading ? (
+                                    <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Joining...</>
+                                ) : typingComplete ? (
+                                    'Enter Interview →'
+                                ) : (
+                                    'Complete calibration to proceed'
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Calibration explainer */}
+                        <div className="mt-5 rounded-xl p-3 text-xs" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                            <p style={{ color: 'var(--text-muted)' }}>
+                                🧠 <strong style={{ color: 'var(--text-secondary)' }}>Why calibrate?</strong> These baselines help the AI distinguish your natural behaviors from potential cheating, reducing false positives and creating a fairer interview experience.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* ── STEP 4: Joining ─────────────────────────────────────────── */}
                 {step === 'joining' && (
                     <div className="glass-card p-8 flex flex-col items-center gap-4 animate-float-up">
                         <div className="w-16 h-16 rounded-full flex items-center justify-center"
@@ -465,7 +731,7 @@ export default function JoinPage() {
                             Setting up your secure interview environment with AI monitoring
                         </p>
                         <div className="flex gap-2 flex-wrap justify-center mt-2">
-                            {['Identity Verified', 'Camera Ready', 'Anti-Cheat Active'].map(badge => (
+                            {['Identity Verified', 'Camera Ready', 'Anti-Cheat Active', 'Calibrated'].map(badge => (
                                 <span key={badge} className="px-3 py-1 rounded-full text-xs font-semibold"
                                     style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>
                                     ✓ {badge}

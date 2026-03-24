@@ -30,7 +30,11 @@ export type EventType =
     | 'gaze_away'
     // Enhanced AI face detection
     | 'suspicious_emotion'
-    | 'face_mismatch';
+    | 'face_mismatch'
+    // Environment detection
+    | 'vm_detected'
+    // Network events
+    | 'network_unstable';
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
@@ -72,6 +76,12 @@ export interface ScoreUpdate {
     authenticity_score: number;
     suspicion_delta: number;
     total_events: number;
+    confidence_score?: number;
+    confidence_breakdown?: {
+        hard_facts: number;
+        ai_inferences: number;
+        heuristics: number;
+    };
 }
 
 export interface CodingChallenge {
@@ -110,6 +120,54 @@ export interface CheatAlert {
     message: string;
     timestamp: string;
     code_snapshot?: string;
+}
+
+// ── Human-in-the-Loop Appeals ───────────────────────────────────────────────
+export interface CandidateAppeal {
+    id: string;
+    session_id: string;
+    alert_id: string;
+    event_type: EventType;
+    candidate_message: string;
+    timestamp: string;
+    recruiter_action?: 'accepted' | 'dismissed' | 'escalated';
+}
+
+// ── Pre-Interview Calibration ───────────────────────────────────────────────
+export interface GazeCalibration {
+    gazeDeviationThreshold: number;
+    calibratedAt: string;
+}
+
+export interface EmotionBaseline {
+    restingEmotion: FaceEmotion;
+    emotionVariance: number;
+    expressionRange: FaceEmotion[];
+}
+
+export interface TypingBaseline {
+    avgWPM: number;
+    avgKeyInterval: number;
+    errorRate: number;
+    burstThreshold: number;
+}
+
+export interface CalibrationData {
+    gaze?: GazeCalibration;
+    emotion?: EmotionBaseline;
+    typing?: TypingBaseline;
+    completedAt: string;
+}
+
+// ── Network Health ──────────────────────────────────────────────────────────
+export type NetworkQuality = 'excellent' | 'good' | 'fair' | 'poor' | 'disconnected';
+
+export interface NetworkHealthData {
+    latency: number;
+    avgLatency: number;
+    jitter: number;
+    quality: NetworkQuality;
+    isUnstable: boolean;
 }
 
 export interface CodeUpdate {
@@ -177,6 +235,12 @@ export interface ServerToClientEvents {
     screen_share_stopped: (data: {}) => void;
     // Enhanced face detection
     face_status_update: (data: FaceStatusUpdate) => void;
+    // Network health
+    pong_check: (data: { t: number }) => void;
+    network_health: (data: { latency: number; quality: string }) => void;
+    // Appeals
+    candidate_appeal: (data: CandidateAppeal) => void;
+    appeal_response: (data: { alert_id: string; action: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -199,4 +263,10 @@ export interface ClientToServerEvents {
     screen_share_stopped: (data: { meeting_id: string }) => void;
     // Enhanced face detection
     face_status_update: (data: { session_id: string; update: FaceStatusUpdate }) => void;
+    // Network health
+    ping_check: (data: { session_id: string; t: number }) => void;
+    network_health: (data: { session_id: string; latency: number; quality: string }) => void;
+    // Appeals
+    candidate_appeal: (data: { session_id: string; alert_id: string; event_type: EventType; message: string }) => void;
+    appeal_response: (data: { session_id: string; alert_id: string; action: 'accepted' | 'dismissed' | 'escalated' }) => void;
 }

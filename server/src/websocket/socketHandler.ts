@@ -23,7 +23,14 @@ const CHEAT_EVENT_MESSAGES: Record<string, string> = {
     // Enhanced AI face detection
     suspicious_emotion: '🎭 Suspicious emotional pattern — abnormal expression detected by AI',
     face_mismatch: '🚨 IDENTITY ALERT — Face does not match reference photo! Possible candidate swap',
+    // Environment detection
+    vm_detected: '🖥️ VIRTUAL MACHINE — Interview running in a virtualized environment (sandbox detected)',
+    // Network
+    network_unstable: '📡 Network instability detected — connection quality degraded',
 };
+
+// In-memory appeal store (keyed by alert_id)
+const appeals = new Map<string, { session_id: string; alert_id: string; event_type: string; message: string; timestamp: string }>();
 
 export function setupSocketHandlers(
     io: Server<ClientToServerEvents, ServerToClientEvents>
@@ -77,6 +84,13 @@ export function setupSocketHandlers(
                     authenticity_score: newScore,
                     suspicion_delta,
                     total_events: allEvents.length,
+                    ...(() => {
+                        const conf = authenticityEngine.calculateConfidence(allEvents);
+                        return {
+                            confidence_score: conf.score,
+                            confidence_breakdown: conf.breakdown,
+                        };
+                    })(),
                 });
 
                 // Emit structured cheat alert for notable events
@@ -228,6 +242,101 @@ export function setupSocketHandlers(
                 io.to(`recruiter:${session.meeting_id}`).emit('face_status_update', update);
             } catch (error) {
                 console.error('face_status_update error:', error);
+            }
+        });
+        // ──────────────────────────────────────────────────────────────────────
+
+        // ─── Network Health: heartbeat ping/pong ──────────────────────────────
+        socket.on('ping_check', (data) => {
+            // Echo back immediately so client can measure RTT
+            socket.emit('pong_check', { t: data.t });
+        });
+
+        // Relay network health to recruiter
+        socket.on('network_health', async (data) => {
+            try {
+                const session = await meetingService.getSessionById(data.session_id);
+                if (!session) return;
+                io.to(`recruiter:${session.meeting_id}`).emit('network_health', {
+                    latency: data.latency,
+                    quality: data.quality,
+                });
+            } catch (error) {
+                console.error('network_health relay error:', error);
+            }
+        });
+        // ──────────────────────────────────────────────────────────────────────
+
+        // ─── Human-in-the-Loop Appeals ─────────────────────────────────────
+        socket.on('candidate_appeal', async (data) => {
+            try {
+                const session = await meetingService.getSessionById(data.session_id);
+                if (!session) return;
+
+                const appeal = {
+                    id: uuidv4(),
+                    session_id: data.session_id,
+                    alert_id: data.alert_id,
+                    event_type: data.event_type,
+                    candidate_message: data.message,
+                    timestamp: new Date().toISOString(),
+                };
+
+                // Store in-memory
+                appeals.set(data.alert_id, {
+                    session_id: data.session_id,
+                    alert_id: data.alert_id,
+                    event_type: data.event_type,
+                    message: data.message,
+                    timestamp: appeal.timestamp,
+                });
+
+                // Relay to recruiter
+                io.to(`recruiter:${session.meeting_id}`).emit('candidate_appeal', appeal);
+                console.log(`💬 Candidate appeal for alert ${data.alert_id}: "${data.message}"`);
+            } catch (error) {
+                console.error('candidate_appeal error:', error);
+            }
+        });
+
+        // Recruiter responds to candidate appeal
+        socket.on('appeal_response', async (data) => {
+            try {
+                const session = await meetingService.getSessionById(data.session_id);
+                if (!session) return;
+
+                // If recruiter accepts the explanation, partially restore score (+50% of penalty)
+                if (data.action === 'accepted') {
+                    const appeal = appeals.get(data.alert_id);
+                    if (appeal) {
+                        const penalty = authenticityEngine.evaluateEvent(appeal.event_type);
+                        const restoration = Math.round(penalty * 0.5);
+                        const allEvents = await meetingService.getEventsBySession(data.session_id);
+                        const currentScore = authenticityEngine.calculateScore(allEvents);
+                        const restoredScore = Math.min(100, currentScore + restoration);
+                        await meetingService.updateSessionScore(data.session_id, restoredScore);
+
+                        // Notify recruiter of updated score
+                        const conf = authenticityEngine.calculateConfidence(allEvents);
+                        io.to(`recruiter:${session.meeting_id}`).emit('score_update', {
+                            authenticity_score: restoredScore,
+                            suspicion_delta: -restoration,
+                            total_events: allEvents.length,
+                            confidence_score: conf.score,
+                            confidence_breakdown: conf.breakdown,
+                        });
+                    }
+                }
+
+                // Notify candidate of the decision
+                io.to(`candidate:${data.session_id}`).emit('appeal_response', {
+                    alert_id: data.alert_id,
+                    action: data.action,
+                });
+
+                console.log(`⚖️ Appeal ${data.alert_id} ${data.action} by recruiter`);
+            } catch (error) {
+                console.error('appeal_response error:', error);
             }
         });
         // ──────────────────────────────────────────────────────────────────────

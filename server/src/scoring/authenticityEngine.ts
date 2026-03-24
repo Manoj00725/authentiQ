@@ -9,31 +9,36 @@ import type { EventLog, EventType } from '../../../shared/types';
 interface EventWeight {
     weight: number;
     description: string;
+    confidence: 100 | 60 | 40; // How reliable is this detection
 }
 
 const EVENT_WEIGHTS: Record<string, EventWeight> = {
-    // Behavioral events
-    tab_switch: { weight: 10, description: 'Candidate switched browser tab' },
-    paste_attempt: { weight: 20, description: 'Large paste detected in answer' },
-    fullscreen_exit: { weight: 15, description: 'Candidate exited fullscreen mode' },
-    word_burst: { weight: 25, description: '150+ words inserted in under 2 seconds' },
-    window_blur: { weight: 8, description: 'Browser window lost focus' },
-    long_delay: { weight: 10, description: 'Unusually long response delay detected' },
-    typing_fast: { weight: 5, description: 'Abnormally fast typing speed detected' },
-    // Coding anti-cheat events
-    code_paste: { weight: 30, description: 'Large code block pasted into editor' },
-    devtools_open: { weight: 35, description: 'Browser DevTools opened during session' },
-    right_click_attempt: { weight: 8, description: 'Right-click attempted in code editor' },
-    keyboard_shortcut_cheat: { weight: 20, description: 'Cheat keyboard shortcut (F12/Ctrl+U) detected' },
-    ai_pattern_detected: { weight: 40, description: 'AI-generated code pattern detected (rapid, large, structured insertion)' },
-    rapid_solution: { weight: 25, description: 'Full solution appeared in under 30 seconds' },
-    // Video call anti-cheat
-    face_not_detected: { weight: 20, description: 'Candidate face not visible in camera' },
-    multiple_faces_detected: { weight: 45, description: 'Multiple faces detected — possible external assistance' },
-    gaze_away: { weight: 12, description: 'Candidate repeatedly looking away from screen' },
-    // Enhanced AI face detection
-    suspicious_emotion: { weight: 15, description: 'Abnormal emotional pattern detected (flat affect, stress spike, or erratic shifts)' },
-    face_mismatch: { weight: 50, description: 'Different person detected — face does not match reference photo' },
+    // Behavioral events — 100% confidence (hard facts from browser APIs)
+    tab_switch: { weight: 10, description: 'Candidate switched browser tab', confidence: 100 },
+    paste_attempt: { weight: 20, description: 'Large paste detected in answer', confidence: 100 },
+    fullscreen_exit: { weight: 15, description: 'Candidate exited fullscreen mode', confidence: 100 },
+    word_burst: { weight: 25, description: '150+ words inserted in under 2 seconds', confidence: 40 },
+    window_blur: { weight: 8, description: 'Browser window lost focus', confidence: 40 },
+    long_delay: { weight: 10, description: 'Unusually long response delay detected', confidence: 40 },
+    typing_fast: { weight: 5, description: 'Abnormally fast typing speed detected', confidence: 40 },
+    // Coding anti-cheat events — 100% confidence
+    code_paste: { weight: 30, description: 'Large code block pasted into editor', confidence: 100 },
+    devtools_open: { weight: 35, description: 'Browser DevTools opened during session', confidence: 100 },
+    right_click_attempt: { weight: 8, description: 'Right-click attempted in code editor', confidence: 100 },
+    keyboard_shortcut_cheat: { weight: 20, description: 'Cheat keyboard shortcut (F12/Ctrl+U) detected', confidence: 100 },
+    ai_pattern_detected: { weight: 40, description: 'AI-generated code pattern detected (rapid, large, structured insertion)', confidence: 60 },
+    rapid_solution: { weight: 25, description: 'Full solution appeared in under 30 seconds', confidence: 40 },
+    // Video call anti-cheat — 60% confidence (AI inferences)
+    face_not_detected: { weight: 20, description: 'Candidate face not visible in camera', confidence: 60 },
+    multiple_faces_detected: { weight: 45, description: 'Multiple faces detected — possible external assistance', confidence: 60 },
+    gaze_away: { weight: 12, description: 'Candidate repeatedly looking away from screen', confidence: 60 },
+    // Enhanced AI face detection — 60% confidence
+    suspicious_emotion: { weight: 15, description: 'Abnormal emotional pattern detected (flat affect, stress spike, or erratic shifts)', confidence: 60 },
+    face_mismatch: { weight: 50, description: 'Different person detected — face does not match reference photo', confidence: 60 },
+    // Environment detection — 100% confidence
+    vm_detected: { weight: 40, description: 'Virtual machine environment detected — interview running in sandbox', confidence: 100 },
+    // Network events — 40% confidence (could be technical issue)
+    network_unstable: { weight: 5, description: 'Network instability detected — possible connectivity issues', confidence: 40 },
 };
 
 // Bonus penalty for repeated blur events (pattern detection)
@@ -46,6 +51,7 @@ const REPEAT_CHEAT_MULTIPLIER = 1.5;
 const CRITICAL_CHEAT_EVENTS = new Set([
     'code_paste', 'devtools_open', 'ai_pattern_detected',
     'multiple_faces_detected', 'face_not_detected', 'face_mismatch',
+    'vm_detected',
 ]);
 
 export class AuthenticityEngine {
@@ -116,7 +122,51 @@ export class AuthenticityEngine {
     static isCriticalCheat(event_type: string): boolean {
         return CRITICAL_CHEAT_EVENTS.has(event_type) ||
             event_type === 'rapid_solution' ||
-            event_type === 'keyboard_shortcut_cheat';
+            event_type === 'keyboard_shortcut_cheat' ||
+            event_type === 'vm_detected';
+    }
+
+    /**
+     * Calculate confidence score — how reliable is the evidence.
+     * 100 = all events are hard-facts from browser APIs.
+     * Lower = more AI-inferred or heuristic events.
+     */
+    calculateConfidence(events: EventLog[]): {
+        score: number;
+        breakdown: { hard_facts: number; ai_inferences: number; heuristics: number };
+    } {
+        const cheatingEvents = events.filter(e =>
+            EVENT_WEIGHTS[e.event_type] && !['session_start', 'session_end', 'window_focus',
+                'answer_submitted', 'code_submitted', 'fullscreen_enter'].includes(e.event_type)
+        );
+
+        if (cheatingEvents.length === 0) {
+            return { score: 100, breakdown: { hard_facts: 0, ai_inferences: 0, heuristics: 0 } };
+        }
+
+        let hard_facts = 0;
+        let ai_inferences = 0;
+        let heuristics = 0;
+        let totalWeighted = 0;
+        let totalWeight = 0;
+
+        for (const event of cheatingEvents) {
+            const ew = EVENT_WEIGHTS[event.event_type];
+            if (!ew) continue;
+            const w = ew.weight;
+            totalWeighted += w * ew.confidence;
+            totalWeight += w;
+
+            if (ew.confidence === 100) hard_facts++;
+            else if (ew.confidence === 60) ai_inferences++;
+            else heuristics++;
+        }
+
+        const score = totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : 100;
+        return {
+            score: Math.max(0, Math.min(100, score)),
+            breakdown: { hard_facts, ai_inferences, heuristics },
+        };
     }
 }
 
