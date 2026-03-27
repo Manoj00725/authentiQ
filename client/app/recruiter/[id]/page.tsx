@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 
 const SEVERITY_COLORS: Record<string, string> = {
-    low: '#10b981', medium: '#f59e0b', high: '#f97316', critical: '#ef4444',
+    low: 'var(--accent-green)', medium: 'var(--accent-yellow)', high: '#f97316', critical: 'var(--accent-red)',
 };
 const EVENT_ICONS: Record<string, string> = {
     tab_switch: '🔄', window_blur: '👁️', window_focus: '✅', paste_attempt: '📋',
@@ -42,19 +42,19 @@ const PUSH_CHALLENGES: CodingChallenge[] = [
 ];
 
 function ScoreGauge({ score }: { score: number }) {
-    const color = score >= 75 ? '#10b981' : score >= 45 ? '#f59e0b' : '#ef4444';
+    const color = score >= 75 ? 'var(--accent-green)' : score >= 45 ? 'var(--accent-yellow)' : 'var(--accent-red)';
     const radius = 60, sw = 9, circ = 2 * Math.PI * radius;
     const dashOff = circ * (1 - score / 100);
     return (
         <div className="flex flex-col items-center">
             <svg width="150" height="150" viewBox="0 0 150 150">
-                <circle cx="75" cy="75" r={radius} fill="none" strokeWidth={sw} stroke="rgba(255,255,255,0.05)" />
+                <circle cx="75" cy="75" r={radius} fill="none" strokeWidth={sw} stroke="var(--border)" />
                 <circle cx="75" cy="75" r={radius} fill="none" strokeWidth={sw} stroke={color}
                     strokeDasharray={circ} strokeDashoffset={dashOff} strokeLinecap="round"
                     transform="rotate(-90 75 75)"
                     style={{ transition: 'stroke-dashoffset 0.8s ease, stroke 0.5s', filter: `drop-shadow(0 0 8px ${color})` }} />
-                <text x="75" y="70" textAnchor="middle" fill={color} fontSize="26" fontWeight="800">{Math.round(score)}</text>
-                <text x="75" y="87" textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize="10">
+                <text x="75" y="70" textAnchor="middle" fill="var(--text-primary)" fontSize="26" fontWeight="800">{Math.round(score)}</text>
+                <text x="75" y="87" textAnchor="middle" fill="var(--text-muted)" fontSize="10">
                     {score >= 75 ? 'High Integrity' : score >= 45 ? 'Moderate' : 'High Risk'}
                 </text>
             </svg>
@@ -297,7 +297,7 @@ export default function RecruiterDashboard() {
         <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
             {/* Top bar */}
             <header className="sticky top-0 z-50 flex items-center justify-between px-5 py-3 border-b"
-                style={{ background: 'rgba(5,8,20,0.92)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)' }}>
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)' }}>
                 <div className="flex items-center gap-3">
                     <div className="w-7 h-7 rounded-lg flex items-center justify-center"
                         style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
@@ -328,8 +328,7 @@ export default function RecruiterDashboard() {
                         </button>
                     )}
                     <button onClick={handleEndInterview}
-                        className="px-4 py-1.5 rounded-lg text-sm font-semibold"
-                        style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171' }}>
+                        className="btn-secondary px-4 py-1.5 rounded-lg text-sm font-semibold !text-red-500 border-red-500/30 hover:bg-red-500/10">
                         End Interview
                     </button>
                 </div>
@@ -545,15 +544,15 @@ export default function RecruiterDashboard() {
                                         <AreaChart data={scoreHistory}>
                                             <defs>
                                                 <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
-                                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                                    <stop offset="5%" stopColor="var(--accent-primary)" stopOpacity={0.35} />
+                                                    <stop offset="95%" stopColor="var(--accent-primary)" stopOpacity={0} />
                                                 </linearGradient>
                                             </defs>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                                            <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#475569' }} />
-                                            <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: '#475569' }} />
-                                            <Tooltip contentStyle={{ background: '#0a0f1e', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '8px', fontSize: 10 }} />
-                                            <Area type="monotone" dataKey="score" stroke="#6366f1" fill="url(#sg)" strokeWidth={2} dot={false} />
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                                            <XAxis dataKey="t" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                                            <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
+                                            <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: 10, color: 'var(--text-primary)' }} />
+                                            <Area type="monotone" dataKey="score" stroke="var(--accent-primary)" fill="url(#sg)" strokeWidth={2} dot={false} />
                                         </AreaChart>
                                     </ResponsiveContainer>
                                 </div>

@@ -9,9 +9,11 @@ const config: Config = {
     theme: {
         extend: {
             colors: {
-                primary: '#6366f1',
-                secondary: '#8b5cf6',
-                accent: '#06b6d4',
+                primary: 'var(--accent-primary)',
+                secondary: 'var(--accent-secondary)',
+                accent: 'var(--accent-cyan)',
+                background: 'var(--bg-primary)',
+                foreground: 'var(--text-primary)',
             },
             fontFamily: {
                 sans: ['Inter', 'sans-serif'],

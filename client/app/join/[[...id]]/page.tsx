@@ -314,9 +314,9 @@ export default function JoinPage() {
             {/* Ambient gradients */}
             <div className="fixed inset-0 pointer-events-none overflow-hidden">
                 <div className="absolute top-1/3 left-1/3 w-80 h-80 rounded-full blur-3xl opacity-15"
-                    style={{ background: 'radial-gradient(circle, #06b6d4, transparent)' }} />
+                    style={{ background: 'radial-gradient(circle, var(--accent-cyan), transparent)' }} />
                 <div className="absolute bottom-1/3 right-1/3 w-80 h-80 rounded-full blur-3xl opacity-10"
-                    style={{ background: 'radial-gradient(circle, #6366f1, transparent)' }} />
+                    style={{ background: 'radial-gradient(circle, var(--accent-primary), transparent)' }} />
             </div>
 
             <div className="relative z-10 w-full max-w-lg">
@@ -340,9 +340,10 @@ export default function JoinPage() {
                             {i > 0 && <div className="w-6 h-px" style={{ background: step === s.key || (s.key === 'joining' && step === 'joining') ? 'var(--accent-primary)' : 'var(--border)' }} />}
                             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold transition-all"
                                 style={{
-                                    background: step === s.key ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)',
-                                    border: step === s.key ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.08)',
-                                    color: step === s.key ? '#a5b4fc' : 'var(--text-muted)',
+                                    background: step === s.key ? 'var(--accent-primary)' : 'rgba(255,255,255,0.04)',
+                                    opacity: step === s.key ? 0.2 : 1,
+                                    border: step === s.key ? '1px solid var(--accent-primary)' : '1px solid var(--border)',
+                                    color: step === s.key ? 'var(--text-primary)' : 'var(--text-muted)',
                                 }}>
                                 {s.icon} {s.label}
                             </div>
@@ -354,8 +355,7 @@ export default function JoinPage() {
                 {step === 'details' && (
                     <div className="glass-card p-8 animate-float-up">
                         <div className="flex items-center gap-3 mb-8">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-                                style={{ background: 'linear-gradient(135deg, #06b6d4, #6366f1)' }}>
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-primary">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                                     <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
                                 </svg>
@@ -402,7 +402,7 @@ export default function JoinPage() {
                                         id="consent"
                                         checked={consentAccepted}
                                         onChange={e => setConsentAccepted(e.target.checked)}
-                                        className="mt-1 accent-indigo-500"
+                                        className="mt-1 accent-primary"
                                     />
                                     <label htmlFor="consent" className="text-xs leading-relaxed cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
                                         <strong style={{ color: 'var(--text-primary)' }}>Monitoring Consent:</strong> I understand that this interview runs in <strong style={{ color: 'var(--text-primary)' }}>enforced fullscreen</strong> and that my <strong style={{ color: 'var(--text-primary)' }}>screen, camera, face identity, emotions, and behavioral signals</strong> (tab switches, paste events, typing patterns, fullscreen status) will be monitored in real-time by AI and the recruiter for authenticity assessment. A reference photo of my face will be captured for identity verification throughout the session. No personal data is stored after the session.

@@ -115,20 +115,30 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
             emitEvent('right_click_attempt', 'low');
         };
 
-        // Detect large code pastes
+        // Block ALL paste attempts — prevent content from entering the editor
         const onPaste = (e: ClipboardEvent) => {
+            e.preventDefault(); // Actually block the paste
             const pasted = e.clipboardData?.getData('text') || '';
-            if (pasted.length > 80) {
-                const severity: Severity = pasted.length > 500 ? 'critical' : 'high';
-                emitEvent('code_paste', severity, {
-                    chars_pasted: pasted.length,
-                    code_snapshot: pasted.slice(0, 300),
-                });
-            }
+            const severity: Severity = pasted.length > 500 ? 'critical' : pasted.length > 80 ? 'high' : 'medium';
+            emitEvent('code_paste', severity, {
+                chars_pasted: pasted.length,
+                code_snapshot: pasted.slice(0, 300),
+            });
+        };
+
+        // Block copy/cut — prevent extracting code from the editor
+        const onCopy = (e: ClipboardEvent) => {
+            e.preventDefault();
+            emitEvent('right_click_attempt', 'low', { action: 'copy_blocked' });
+        };
+        const onCut = (e: ClipboardEvent) => {
+            e.preventDefault();
+            emitEvent('right_click_attempt', 'low', { action: 'cut_blocked' });
         };
 
         // Intercept cheat keyboard shortcuts
         const onKeydown = (e: KeyboardEvent) => {
+            // Block DevTools shortcuts
             const isCheatShortcut =
                 e.key === 'F12' ||
                 (e.ctrlKey && e.key === 'u') ||
@@ -138,6 +148,17 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
             if (isCheatShortcut) {
                 e.preventDefault();
                 emitEvent('keyboard_shortcut_cheat', 'high', { key: e.key, combo: `ctrl:${e.ctrlKey} shift:${e.shiftKey}` });
+            }
+            // Block copy/paste/cut keyboard shortcuts
+            if (e.ctrlKey && (e.key === 'v' || e.key === 'V')) {
+                e.preventDefault();
+                emitEvent('code_paste', 'high', { method: 'keyboard_shortcut' });
+            }
+            if (e.ctrlKey && (e.key === 'c' || e.key === 'C') && !e.shiftKey) {
+                e.preventDefault();
+            }
+            if (e.ctrlKey && (e.key === 'x' || e.key === 'X')) {
+                e.preventDefault();
             }
         };
 
@@ -172,6 +193,8 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
 
         el.addEventListener('contextmenu', onContextMenu);
         el.addEventListener('paste', onPaste as EventListener);
+        el.addEventListener('copy', onCopy as EventListener);
+        el.addEventListener('cut', onCut as EventListener);
         el.addEventListener('keydown', onKeydown);
         el.addEventListener('input', onInput);
 
@@ -191,6 +214,8 @@ export function useMonitoring({ sessionId, onEvent }: MonitoringOptions) {
         return () => {
             el.removeEventListener('contextmenu', onContextMenu);
             el.removeEventListener('paste', onPaste as EventListener);
+            el.removeEventListener('copy', onCopy as EventListener);
+            el.removeEventListener('cut', onCut as EventListener);
             el.removeEventListener('keydown', onKeydown);
             el.removeEventListener('input', onInput);
             if (devtoolsIntervalRef.current) clearInterval(devtoolsIntervalRef.current);

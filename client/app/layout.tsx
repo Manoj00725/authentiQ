@@ -10,10 +10,15 @@ export const metadata: Metadata = {
     keywords: ['interviews', 'authenticity', 'behavioral monitoring', 'remote hiring'],
 };
 
+import Navbar from './Navbar';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
         <html lang="en" suppressHydrationWarning>
-            <body className={inter.className} suppressHydrationWarning>{children}</body>
+            <body className={`${inter.className} min-h-screen bg-background text-foreground transition-colors duration-400`} suppressHydrationWarning>
+                <Navbar />
+                <main>{children}</main>
+            </body>
         </html>
     );
 }

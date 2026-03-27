@@ -45,13 +45,13 @@ export default function CreateMeetingPage() {
     };
 
     return (
-        <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12" style={{ background: 'var(--bg-primary)' }}>
+        <div className="min-h-[calc(100-73px)] flex flex-col items-center justify-center px-4 py-12 relative overflow-hidden">
             {/* Ambient */}
-            <div className="fixed inset-0 pointer-events-none overflow-hidden">
-                <div className="absolute top-1/4 left-1/4 w-80 h-80 rounded-full blur-3xl opacity-15"
-                    style={{ background: 'radial-gradient(circle, #6366f1, transparent)' }} />
-                <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-3xl opacity-10"
-                    style={{ background: 'radial-gradient(circle, #06b6d4, transparent)' }} />
+            <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+                <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full blur-[100px] opacity-20"
+                    style={{ background: 'radial-gradient(circle, var(--accent-primary), transparent 70%)' }} />
+                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full blur-[100px] opacity-15"
+                    style={{ background: 'radial-gradient(circle, var(--accent-secondary), transparent 70%)' }} />
             </div>
 
             <div className="relative z-10 w-full max-w-lg">

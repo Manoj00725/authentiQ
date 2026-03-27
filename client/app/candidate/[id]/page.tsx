@@ -46,13 +46,13 @@ const STARTER_CODE: Record<CodingLanguage, string> = {
 };
 
 const FACE_STATUS_CONFIG = {
-    loading: { color: '#94a3b8', icon: '⏳', label: 'Loading AI...' },
-    ready: { color: '#94a3b8', icon: '🔄', label: 'Starting detection' },
-    face_detected: { color: '#10b981', icon: '✅', label: 'Face Detected' },
-    no_face: { color: '#ef4444', icon: '❌', label: 'Face Not Visible' },
-    multiple_faces: { color: '#ef4444', icon: '👥', label: 'Multiple Faces!' },
-    gaze_away: { color: '#f59e0b', icon: '👀', label: 'Looking Away' },
-    no_camera: { color: '#94a3b8', icon: '📷', label: 'No Camera' },
+    loading: { color: 'var(--text-muted)', icon: '⏳', label: 'Loading AI...' },
+    ready: { color: 'var(--text-muted)', icon: '🔄', label: 'Starting detection' },
+    face_detected: { color: 'var(--accent-green)', icon: '✅', label: 'Face Detected' },
+    no_face: { color: 'var(--accent-red)', icon: '❌', label: 'Face Not Visible' },
+    multiple_faces: { color: 'var(--accent-red)', icon: '👥', label: 'Multiple Faces!' },
+    gaze_away: { color: 'var(--accent-yellow)', icon: '👀', label: 'Looking Away' },
+    no_camera: { color: 'var(--text-muted)', icon: '📷', label: 'No Camera' },
 };
 
 export default function CandidatePage() {
@@ -387,8 +387,8 @@ export default function CandidatePage() {
     return (
         <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg-primary)', height: '100vh', overflow: 'hidden' }}>
             {/* Top bar */}
-            <header className="flex items-center justify-between px-5 py-2 border-b shrink-0"
-                style={{ background: 'rgba(5,8,20,0.95)', borderColor: 'var(--border)' }}>
+            <header className="flex items-center justify-between px-5 py-2 border-b shrink-0 transition-colors"
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)' }}>
                 <div className="flex items-center gap-3">
                     <span className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>Candidate</span>
                     <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Coding Interview · Challenge {currentIndex + 1}/{challenges.length}</span>
@@ -597,7 +597,7 @@ export default function CandidatePage() {
                 <div className="w-5/12 flex flex-col border-r overflow-y-auto p-5"
                     style={{ borderColor: 'var(--border)', background: 'rgba(255,255,255,0.015)' }}>
                     <div className="flex items-center gap-2 mb-4">
-                        <span className="px-2 py-0.5 rounded text-xs font-bold" style={{ background: 'rgba(99,102,241,0.25)', color: '#a5b4fc' }}>
+                        <span className="px-2 py-0.5 rounded text-xs font-bold" style={{ background: 'var(--accent-primary)', opacity: 0.2, color: 'var(--text-primary)' }}>
                             Q{currentIndex + 1}
                         </span>
                         <h2 className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>{currentChallenge.title}</h2>
@@ -683,6 +683,9 @@ export default function CandidatePage() {
                             {lines.map((_, i) => <div key={i} style={{ height: '1.5rem' }}>{i + 1}</div>)}
                         </div>
                         <textarea ref={codeRef} value={code} onChange={e => handleCodeChange(e.target.value)}
+                            onPaste={e => e.preventDefault()}
+                            onCopy={e => e.preventDefault()}
+                            onCut={e => e.preventDefault()}
                             spellCheck={false}
                             className="flex-1 p-3 text-xs font-mono resize-none outline-none leading-6"
                             style={{ background: 'transparent', color: '#e2e8f0', lineHeight: '1.5rem', border: 'none', caretColor: '#6366f1' }} />
@@ -690,7 +693,7 @@ export default function CandidatePage() {
 
                     <div className="px-4 py-2 text-xs text-center border-t shrink-0"
                         style={{ borderColor: 'var(--border)', color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)' }}>
-                        Right-click &amp; paste blocked · Code streamed to recruiter in real-time
+                        🔒 Copy, paste &amp; right-click blocked · Code streamed to recruiter in real-time
                     </div>
                 </div>
             </div>
@@ -699,23 +702,22 @@ export default function CandidatePage() {
             {!sessionStarted && !sessionEnded && (
                 <div className="fixed inset-0 z-[300] flex items-center justify-center"
                     style={{ background: 'rgba(0,0,0,0.97)', backdropFilter: 'blur(16px)' }}>
-                    <div className="text-center px-10 py-14 rounded-2xl max-w-md w-full mx-4"
-                        style={{ background: 'rgba(99,102,241,0.06)', border: '2px solid rgba(99,102,241,0.4)', boxShadow: '0 0 80px rgba(99,102,241,0.2)' }}>
-                        <div className="text-6xl mb-5">⛶</div>
-                        <h2 className="text-2xl font-black mb-3" style={{ color: 'var(--text-primary)' }}>Ready to Begin?</h2>
-                        <p className="text-sm leading-relaxed mb-2" style={{ color: 'rgba(255,255,255,0.65)' }}>
+                    <div className="text-center px-10 py-14 rounded-2xl max-w-md w-full mx-4 glass-card"
+                        style={{ boxShadow: '0 0 80px var(--glow-accent)' }}>
+                        <div className="text-6xl mb-5 text-primary">⛶</div>
+                        <h2 className="text-2xl font-black mb-3 text-foreground">Ready to Begin?</h2>
+                        <p className="text-sm leading-relaxed mb-2 text-secondary">
                             This interview requires you to remain in fullscreen mode. Your camera and screen will be shared with the recruiter.
                         </p>
-                        <p className="text-xs mb-8" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                        <p className="text-xs mb-8 text-muted">
                             Anti-cheat monitoring and face detection will activate automatically.
                         </p>
                         <button
                             onClick={handleStartInterview}
-                            className="w-full py-4 rounded-xl font-black text-base transition-all"
-                            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white', boxShadow: '0 4px 32px rgba(99,102,241,0.5)' }}>
+                            className="btn-primary w-full py-4 rounded-xl font-black text-base shadow-xl shadow-primary/30">
                             Start Interview →
                         </button>
-                        <p className="text-xs mt-4" style={{ color: 'rgba(255,255,255,0.25)' }}>You are: <span style={{ color: '#a5b4fc' }}>{candidateName || 'Candidate'}</span></p>
+                        <p className="text-xs mt-4 text-muted">You are: <span className="text-primary">{candidateName || 'Candidate'}</span></p>
                     </div>
                 </div>
             )}

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 const SEVERITY_COLORS: Record<string, string> = {
-    low: '#10b981', medium: '#f59e0b', high: '#f97316', critical: '#ef4444',
+    low: 'var(--accent-green)', medium: 'var(--accent-yellow)', high: '#f97316', critical: 'var(--accent-red)',
 };
 
 const EVENT_ICONS: Record<string, string> = {
@@ -15,20 +15,20 @@ const EVENT_ICONS: Record<string, string> = {
 };
 
 function ScoreGauge({ score }: { score: number }) {
-    const color = score >= 75 ? '#10b981' : score >= 45 ? '#f59e0b' : '#ef4444';
+    const color = score >= 75 ? 'var(--accent-green)' : score >= 45 ? 'var(--accent-yellow)' : 'var(--accent-red)';
     const radius = 90;
     const circumference = 2 * Math.PI * radius;
     const dashOffset = circumference * (1 - score / 100);
     return (
         <svg width="220" height="220" viewBox="0 0 220 220">
-            <circle cx="110" cy="110" r={radius} fill="none" strokeWidth={12} stroke="rgba(255,255,255,0.06)" />
+            <circle cx="110" cy="110" r={radius} fill="none" strokeWidth={12} stroke="var(--border)" />
             <circle cx="110" cy="110" r={radius} fill="none" strokeWidth={12} stroke={color}
                 strokeDasharray={circumference} strokeDashoffset={dashOffset}
                 strokeLinecap="round" transform="rotate(-90 110 110)"
                 style={{ transition: 'stroke-dashoffset 1.2s ease', filter: `drop-shadow(0 0 12px ${color})` }} />
-            <text x="110" y="100" textAnchor="middle" fill={color} fontSize="46" fontWeight="900"
+            <text x="110" y="100" textAnchor="middle" fill="var(--text-primary)" fontSize="46" fontWeight="900"
                 style={{ fontFamily: 'Inter' }}>{Math.round(score)}</text>
-            <text x="110" y="122" textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="13"
+            <text x="110" y="122" textAnchor="middle" fill="var(--text-muted)" fontSize="13"
                 style={{ fontFamily: 'Inter' }}>Authenticity Score</text>
             <text x="110" y="142" textAnchor="middle" fill={color} fontSize="14" fontWeight="600"
                 style={{ fontFamily: 'Inter' }}>
@@ -126,10 +126,9 @@ export default function ReportPage() {
         <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
             {/* Header */}
             <header className="sticky top-0 z-40 flex items-center justify-between px-6 py-3 border-b"
-                style={{ background: 'rgba(5,8,20,0.95)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)' }}>
+                style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border)', backdropFilter: 'blur(12px)' }}>
                 <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-lg flex items-center justify-center"
-                        style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-primary">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                         </svg>
@@ -208,9 +207,9 @@ export default function ReportPage() {
                             <ResponsiveContainer width="100%" height={160}>
                                 <PieChart>
                                     <Pie data={pieData} cx="50%" cy="50%" outerRadius={65} dataKey="value" label={({ name }) => name.replace(/_/g, ' ')}>
-                                        {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                                        {pieData.map((_, i) => <Cell key={i} fill={i % 3 === 0 ? 'var(--accent-primary)' : i % 3 === 1 ? 'var(--accent-secondary)' : 'var(--accent-cyan)'} />)}
                                     </Pie>
-                                    <Tooltip contentStyle={{ background: '#0a0f1e', borderRadius: '8px', fontSize: 11 }} />
+                                    <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: 11, color: 'var(--text-primary)' }} />
                                 </PieChart>
                             </ResponsiveContainer>
                         )}
